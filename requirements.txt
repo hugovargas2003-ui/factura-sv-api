@@ -1,0 +1,24 @@
+# FACTURA-SV API Backend — Production Dependencies
+# Python 3.11+
+
+# Web framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.18
+
+# HTTP client (async, for MH API calls)
+httpx==0.28.1
+
+# Cryptography (firma digital .p12, JWT RS256)
+cryptography==44.0.0
+PyJWT==2.10.1
+
+# Validation & serialization
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+# Date/time
+python-dateutil==2.9.0
+
+# Environment
+python-dotenv==1.0.1
