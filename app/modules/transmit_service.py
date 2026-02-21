@@ -115,10 +115,13 @@ class TransmitService:
         Raises:
             TransmitError: If transmission fails
         """
-        url = get_mh_url("recepcion_dte")
+        # Use token's environment (billing tokens are PRODUCTION even if global is TEST)
+        token_env = getattr(token_info, 'environment', settings.mh_environment)
+        from app.core.config import MH_URLS
+        url = MH_URLS[token_env]["recepcion_dte"]
 
         # Determine ambiente code
-        ambiente = "00" if settings.mh_environment == MHEnvironment.TEST else "01"
+        ambiente = "00" if token_env == MHEnvironment.TEST else "01"
 
         # Get schema version for this DTE type
         version = DTE_SCHEMA_VERSIONS.get(tipo_dte, 1)

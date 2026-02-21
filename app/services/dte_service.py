@@ -444,7 +444,7 @@ class DTEService:
             raise DTEServiceError("Error generando número de control para billing", "SEQ_ERROR")
         numero_control = seq_result.data[0]["numero_control"]
 
-        builder = DTEBuilder(emisor=emisor_data, ambiente="00")
+        builder = DTEBuilder(emisor=emisor_data, ambiente="01")
         dte_dict, codigo_gen = builder.build(
             tipo_dte=tipo_dte,
             numero_control=numero_control,
@@ -464,13 +464,24 @@ class DTEService:
             algorithm="RS256",
         )
 
-        # 3. Authenticate with MH
+        # 3. Authenticate with MH (billing always uses PRODUCTION)
         nit = mh_credentials["nit"]
         password = mh_credentials["password"]
-        token_info = await auth_bridge.authenticate(nit=nit, password=password)
+        import httpx
+        from app.modules.auth_bridge import TokenInfo, MHEnvironment
+        auth_url = "https://api.dtes.mh.gob.sv/seguridad/auth"
+        async with httpx.AsyncClient(timeout=30.0, verify=True) as client:
+            auth_resp = await client.post(auth_url, json={"user": nit, "pwd": password},
+                headers={"Content-Type": "application/json", "Accept": "application/json"})
+        auth_data = auth_resp.json()
+        if auth_resp.status_code != 200:
+            raise DTEServiceError(f"Billing MH auth failed: {auth_data}", "BILLING_AUTH_ERROR")
+        body = auth_data.get("body", auth_data)
+        token_info = TokenInfo(token=body["token"], nit=nit, environment=MHEnvironment.PRODUCTION)
 
-        # 4. Transmit to MH
-        mh_result = await transmit_service.transmit(
+        # 4. Transmit to MH (production)
+        from app.modules.transmit_service import transmit_service as ts
+        mh_result = await ts.transmit(
             token_info=token_info,
             signed_dte=signed_jwt,
             tipo_dte=tipo_dte,
