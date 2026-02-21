@@ -471,8 +471,7 @@ class DTEService:
         from app.modules.auth_bridge import TokenInfo, MHEnvironment
         auth_url = "https://api.dtes.mh.gob.sv/seguridad/auth"
         async with httpx.AsyncClient(timeout=30.0, verify=True) as client:
-            auth_resp = await client.post(auth_url, json={"user": nit, "pwd": password},
-                headers={"Content-Type": "application/json", "Accept": "application/json"})
+            auth_resp = await client.post(auth_url, data={"user": nit, "pwd": password})
         auth_data = auth_resp.json()
         if auth_resp.status_code != 200:
             raise DTEServiceError(f"Billing MH auth failed: {auth_data}", "BILLING_AUTH_ERROR")
