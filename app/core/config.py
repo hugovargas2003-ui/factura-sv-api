@@ -22,6 +22,7 @@ try:
         port: int = 8000
 
         class Config:
+            extra = "ignore"
             env_file = ".env"
             env_file_encoding = "utf-8"
 

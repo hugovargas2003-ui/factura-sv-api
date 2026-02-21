@@ -627,6 +627,21 @@ async def generate_control_number(
 
 
 # ─────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────
+# SAAS LAYER: DTE EMISSION (Sprint 1)
+# ─────────────────────────────────────────────────────────────
+
+from app.dependencies import get_dte_service, get_current_user
+from app.routers.dte_router import create_dte_router
+
+_dte_router = create_dte_router(
+    get_dte_service=get_dte_service,
+    get_current_user=get_current_user,
+)
+app.include_router(_dte_router)
+
+
 # ENTRYPOINT
 # ─────────────────────────────────────────────────────────────
 

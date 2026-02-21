@@ -22,3 +22,6 @@ python-dateutil==2.9.0
 
 # Environment
 python-dotenv==1.0.1
+
+# SaaS Layer (Sprint 1)
+supabase==2.11.0
