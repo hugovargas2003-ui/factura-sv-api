@@ -34,3 +34,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # --workers 1: obligatorio mientras las sesiones estén en memoria (no compartidas).
 # --timeout-keep-alive 65: evita que Railway cierre conexiones antes que el proxy.
 CMD sh -c "uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --workers 1 --timeout-keep-alive 65"
+# Sprint 1 - Fri Feb 20 19:17:24 CST 2026
