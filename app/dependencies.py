@@ -17,14 +17,19 @@ from app.services.dte_service import DTEService
 security = HTTPBearer()
 
 
+def _clean_env(key: str) -> str:
+    """Sanitiza variable de entorno: elimina whitespace y comillas residuales."""
+    return os.environ[key].strip().strip('"').strip("'")
+
+
 # ── Singletons ──
 
 @lru_cache()
 def get_supabase() -> SupabaseClient:
     """Supabase client singleton (service role)."""
     return create_client(
-        os.environ["SUPABASE_URL"],
-        os.environ["SUPABASE_SERVICE_ROLE_KEY"],
+        _clean_env("SUPABASE_URL"),
+        _clean_env("SUPABASE_SERVICE_ROLE_KEY"),
     )
 
 
