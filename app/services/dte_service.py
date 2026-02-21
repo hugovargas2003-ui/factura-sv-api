@@ -453,6 +453,10 @@ class DTEService:
             condicion_operacion=dte_payload.get("condicion_operacion", 1),
         )
 
+        # Log DTE for debugging
+        import json as jsonmod
+        logger.info(f"[BILLING] DTE JSON: {jsonmod.dumps(dte_dict, default=str)[:2000]}")
+
         # 2. Sign with PEM private key directly (no .p12 needed)
         pem_key = mh_credentials.get("private_key_pem", "")
         if not pem_key:
