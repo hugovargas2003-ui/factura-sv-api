@@ -114,6 +114,7 @@ async def create_auto_invoice(
         emisor = get_billing_emisor()
         mh_creds = get_billing_mh_credentials()
 
+        logger.info(f"[BILLING] MH NIT: {mh_creds['nit'][:8]}***, password len: {len(mh_creds['password'])}")
         if not mh_creds["nit"] or not mh_creds["password"]:
             logger.warning("Billing MH credentials not configured, skipping auto-invoice")
             return AutoInvoiceResponse(
