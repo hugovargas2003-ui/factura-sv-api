@@ -357,19 +357,48 @@ class DTEService:
         self._token_cache[org_id] = token_info
         return token_info
 
+    # Accounts with unlimited access (no quota enforcement)
+    BYPASS_EMAILS = {"hugovargas2003@msn.com"}
+
     async def _check_quota(self, org_id: str):
-        count_result = self.db.rpc("get_monthly_dte_count", {"p_org_id": org_id}).execute()
-        monthly_count = count_result.data or 0
+        """Enforce monthly DTE quota and max_companies limit."""
+        # Check if org owner is bypass account
+        owner = self.db.table("users").select("email").eq(
+            "org_id", org_id).limit(1).execute()
+        if owner.data and owner.data[0].get("email") in self.BYPASS_EMAILS:
+            return  # Unlimited access
 
         org_result = self.db.table("organizations").select(
-            "monthly_quota, plan").eq("id", org_id).single().execute()
+            "monthly_quota, plan, max_companies").eq("id", org_id).single().execute()
 
-        if org_result.data:
-            quota = org_result.data.get("monthly_quota", 50)
+        if not org_result.data:
+            return
+
+        org = org_result.data
+        plan = org.get("plan", "free")
+        quota = org.get("monthly_quota", 10)
+        max_companies = org.get("max_companies", 1)
+
+        # 1. Check DTE quota (-1 or 999999 = unlimited)
+        if quota > 0 and quota < 999999:
+            count_result = self.db.rpc("get_monthly_dte_count", {"p_org_id": org_id}).execute()
+            monthly_count = count_result.data or 0
             if monthly_count >= quota:
                 raise DTEServiceError(
-                    f"Límite mensual alcanzado ({quota} DTEs). Actualice su plan.",
+                    f"Límite mensual alcanzado ({monthly_count}/{quota} DTEs). "
+                    f"Plan: {plan}. Actualice en /dashboard/planes",
                     "QUOTA_EXCEEDED")
+
+        # 2. Check max companies
+        if max_companies > 0 and max_companies < 999:
+            creds_count = self.db.table("dte_credentials").select(
+                "id", count="exact").eq("org_id", org_id).execute()
+            companies_used = creds_count.count or 0
+            if companies_used > max_companies:
+                raise DTEServiceError(
+                    f"Límite de empresas alcanzado ({companies_used}/{max_companies}). "
+                    f"Plan: {plan}. Actualice en /dashboard/planes",
+                    "COMPANIES_EXCEEDED")
 
     @staticmethod
     def _creds_to_emisor(creds: dict) -> dict:
