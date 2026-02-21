@@ -223,3 +223,7 @@ class HealthResponse(BaseModel):
     version: str
     environment: str
     mh_auth_url: str
+    supabase_url: str = ""
+    supabase_url_repr: str = ""
+    encryption_key_set: bool = False
+    service_key_set: bool = False
