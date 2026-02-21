@@ -237,17 +237,11 @@ async def invalidation_error_handler(request: Request, exc: InvalidationError):
 @app.get("/health", response_model=HealthResponse, tags=["Sistema"])
 async def health_check():
     """Verificar estado del servicio."""
-    import os
-    sb_url = os.environ.get("SUPABASE_URL", "NOT_SET")
     return {
         "status": "ok",
         "version": settings.app_version,
         "environment": settings.mh_environment.value,
         "mh_auth_url": get_mh_url("auth"),
-        "supabase_url": sb_url,
-        "supabase_url_repr": repr(sb_url),
-        "encryption_key_set": bool(os.environ.get("ENCRYPTION_MASTER_KEY")),
-        "service_key_set": bool(os.environ.get("SUPABASE_SERVICE_ROLE_KEY")),
     }
 
 
