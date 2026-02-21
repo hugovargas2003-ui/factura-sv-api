@@ -476,7 +476,8 @@ class DTEService:
         if auth_resp.status_code != 200:
             raise DTEServiceError(f"Billing MH auth failed: {auth_data}", "BILLING_AUTH_ERROR")
         body = auth_data.get("body", auth_data)
-        token_info = TokenInfo(token=body["token"], nit=nit, environment=MHEnvironment.PRODUCTION)
+        raw_token = body["token"].replace("Bearer ", "") if body["token"].startswith("Bearer ") else body["token"]
+        token_info = TokenInfo(token=raw_token, nit=nit, environment=MHEnvironment.PRODUCTION)
 
         # 4. Transmit to MH (production)
         from app.modules.transmit_service import transmit_service as ts
