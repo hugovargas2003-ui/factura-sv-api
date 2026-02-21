@@ -71,12 +71,10 @@ def get_billing_emisor() -> dict:
                                      "Actividades de programación informática"),
         "nombre_comercial": "FACTURA-SV",
         "tipo_establecimiento": "20",
-        "direccion": {
-            "departamento": os.getenv("BILLING_EMISOR_DEPTO", "06"),
-            "municipio": os.getenv("BILLING_EMISOR_MUNICIPIO", "14"),
-            "complemento": os.getenv("BILLING_EMISOR_DIRECCION",
+        "direccion_departamento": os.getenv("BILLING_EMISOR_DEPTO", "06"),
+        "direccion_municipio": os.getenv("BILLING_EMISOR_MUNICIPIO", "14"),
+        "direccion_complemento": os.getenv("BILLING_EMISOR_DIRECCION",
                                       "San Salvador, El Salvador"),
-        },
         "telefono": os.getenv("BILLING_EMISOR_TELEFONO", ""),
         "correo": os.getenv("BILLING_EMISOR_CORREO", "hugovargas2003@gmail.com"),
     }
@@ -132,11 +130,9 @@ async def create_auto_invoice(
         # Build receptor
         receptor = {
             "nombre": req.receptor_nombre,
-            "direccion": {
-                "departamento": req.receptor_departamento or "06",
-                "municipio": req.receptor_municipio or "14",
-                "complemento": req.receptor_direccion or "El Salvador",
-            },
+            "direccion_departamento": req.receptor_departamento or "06",
+            "direccion_municipio": req.receptor_municipio or "14",
+            "direccion_complemento": req.receptor_direccion or "El Salvador",
         }
 
         if tipo_dte == "03":
@@ -152,10 +148,10 @@ async def create_auto_invoice(
         else:
             # Factura: tipo/numero documento
             if has_nit:
-                receptor["tipo_documento"] = "36"  # NIT
+                receptor["tipo_documento"] = "36"
                 receptor["num_documento"] = req.receptor_nit
             else:
-                receptor["tipo_documento"] = "13"  # DUI
+                receptor["tipo_documento"] = "13"
                 receptor["num_documento"] = "00000000-0"
             if req.receptor_email:
                 receptor["correo"] = req.receptor_email
