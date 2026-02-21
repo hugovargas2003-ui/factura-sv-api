@@ -429,14 +429,25 @@ class DTEService:
         receptor = dte_payload["receptor"]
         items = dte_payload["items"]
 
-        # 1. Generate numero_control via billing sequence
-        #    Use a fixed org placeholder for billing
-        billing_prefix = "BILL"
+        # 1. Generate numero_control via sequence RPC
+        #    Use Hugo's org for billing sequences
+        BILLING_ORG_ID = "35505aeb-7343-4d50-b098-f713239685c3"
         from app.mh.dte_builder import DTEBuilder
+
+        seq_result = self.db.rpc("get_next_numero_control", {
+            "p_org_id": BILLING_ORG_ID,
+            "p_tipo_dte": tipo_dte,
+            "p_cod_estab": "BILL",
+            "p_cod_pv": "B001",
+        }).execute()
+        if not seq_result.data:
+            raise DTEServiceError("Error generando número de control para billing", "SEQ_ERROR")
+        numero_control = seq_result.data[0]["numero_control"]
+
         builder = DTEBuilder(emisor=emisor_data, ambiente="00")
         dte_dict, codigo_gen = builder.build(
             tipo_dte=tipo_dte,
-            numero_control=f"DTE-{tipo_dte}-BILL0001-000000000000001",
+            numero_control=numero_control,
             receptor=receptor,
             items=items,
             condicion_operacion=dte_payload.get("condicion_operacion", 1),
