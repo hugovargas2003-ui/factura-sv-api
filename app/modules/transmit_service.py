@@ -136,11 +136,16 @@ class TransmitService:
             "codigoGeneracion": codigo_generacion,
         }
 
+        # Production MH expects form-data, test accepts JSON
+        token_env = getattr(token_info, 'environment', settings.mh_environment)
+        use_form = (token_env == MHEnvironment.PRODUCTION)
+
         headers = {
             "Authorization": token_info.bearer,
-            "Content-Type": "application/json",
-            "Accept": "application/json",
         }
+        if not use_form:
+            headers["Content-Type"] = "application/json"
+            headers["Accept"] = "application/json"
 
         logger.info(
             f"Transmitting DTE: type={tipo_dte}, "
@@ -154,7 +159,10 @@ class TransmitService:
                 async with httpx.AsyncClient(
                     timeout=self.TIMEOUT_SECONDS, verify=True
                 ) as client:
-                    response = await client.post(url, json=payload, headers=headers)
+                    if use_form:
+                        response = await client.post(url, data=payload, headers=headers)
+                    else:
+                        response = await client.post(url, json=payload, headers=headers)
 
                 return self._parse_response(response, codigo_generacion)
 
