@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.services.dte_service import DTEService
-from app.dependencies import get_db, get_current_org
+from app.dependencies import get_supabase
 
 logger = logging.getLogger(__name__)
 
@@ -84,18 +84,20 @@ def get_billing_emisor() -> dict:
 
 def get_billing_mh_credentials() -> dict:
     """Get MH API credentials for billing emissions."""
+    import base64
+    pem_b64 = os.getenv("BILLING_PRIVATE_KEY_B64", "")
+    pem_key = base64.b64decode(pem_b64).decode() if pem_b64 else ""
     return {
         "nit": os.getenv("BILLING_MH_NIT", ""),
         "password": os.getenv("BILLING_MH_PASSWORD", ""),
-        "certificate_path": os.getenv("BILLING_MH_CERT_PATH", ""),
-        "certificate_password": os.getenv("BILLING_MH_CERT_PASSWORD", ""),
+        "private_key_pem": pem_key,
     }
 
 
 @router.post("/auto-invoice", response_model=AutoInvoiceResponse)
 async def create_auto_invoice(
     req: AutoInvoiceRequest,
-    db=Depends(get_db),
+    db=Depends(get_supabase),
 ):
     """
     Generate a fiscal DTE for a subscription payment.

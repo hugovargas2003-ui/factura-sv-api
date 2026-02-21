@@ -419,64 +419,78 @@ class DTEService:
 
     async def emit_billing_dte(self, dte_payload: dict, mh_credentials: dict) -> dict:
         """
-        Emit a DTE using specific MH credentials (for billing/auto-invoicing).
-        Bypasses org credential lookup — uses provided credentials directly.
+        Emit a DTE using billing credentials (for auto-invoicing).
+        Uses PEM private key directly instead of .p12 certificate.
         """
-        from app.services.mh_bridge import MHAuthBridge, MHTransmissionBridge
-        from app.services.dte_builder import DTEBuilder
-        from app.services.dte_signer import DTESigner
-        import os
+        import jwt as pyjwt
 
         tipo_dte = dte_payload["tipo_dte"]
+        emisor_data = dte_payload["emisor"]
+        receptor = dte_payload["receptor"]
+        items = dte_payload["items"]
 
-        # 1. Build DTE JSON
-        builder = DTEBuilder()
-        dte_json = builder.build(dte_payload)
+        # 1. Generate numero_control via billing sequence
+        #    Use a fixed org placeholder for billing
+        billing_prefix = "BILL"
+        from app.mh.dte_builder import DTEBuilder
+        builder = DTEBuilder(emisor=emisor_data, ambiente="00")
+        dte_dict, codigo_gen = builder.build(
+            tipo_dte=tipo_dte,
+            numero_control=f"DTE-{tipo_dte}-BILL0001-000000000000001",
+            receptor=receptor,
+            items=items,
+            condicion_operacion=dte_payload.get("condicion_operacion", 1),
+        )
 
-        # 2. Sign DTE
-        signer = DTESigner()
-        signed_dte = signer.sign(
-            dte_json,
-            cert_path=mh_credentials["certificate_path"],
-            cert_password=mh_credentials["certificate_password"],
+        # 2. Sign with PEM private key directly (no .p12 needed)
+        pem_key = mh_credentials.get("private_key_pem", "")
+        if not pem_key:
+            raise DTEServiceError("Clave privada de facturación no configurada", "NO_BILLING_KEY")
+
+        signed_jwt = pyjwt.encode(
+            payload=dte_dict,
+            key=pem_key,
+            algorithm="RS256",
         )
 
         # 3. Authenticate with MH
-        auth_bridge = MHAuthBridge(
-            environment=os.getenv("MH_ENVIRONMENT", "test")
-        )
-        token_info = await auth_bridge.authenticate(
-            nit=mh_credentials["nit"],
-            password=mh_credentials["password"],
-        )
+        nit = mh_credentials["nit"]
+        password = mh_credentials["password"]
+        token_info = await auth_bridge.authenticate(nit=nit, password=password)
 
         # 4. Transmit to MH
-        tx_bridge = MHTransmissionBridge(
-            environment=os.getenv("MH_ENVIRONMENT", "test")
-        )
-        result = await tx_bridge.transmit(
-            signed_document=signed_dte,
-            token=token_info["token"],
+        mh_result = await transmit_service.transmit(
+            token_info=token_info,
+            signed_dte=signed_jwt,
             tipo_dte=tipo_dte,
+            codigo_generacion=codigo_gen,
         )
 
-        # 5. Store in billing_invoices table (not dte_documents — separate audit)
+        result = {
+            "codigo_generacion": codigo_gen,
+            "numero_control": dte_dict.get("identificacion", {}).get("numeroControl"),
+            "sello_recepcion": mh_result.sello if mh_result.status == "PROCESADO" else None,
+            "estado": mh_result.status,
+        }
+
+        # 5. Store in billing_invoices table
         try:
+            resumen = dte_dict.get("resumen", {})
+            monto = (resumen.get("montoTotalOperacion") or resumen.get("totalPagar") or 0)
             self.db.table("billing_invoices").insert({
                 "tipo_dte": tipo_dte,
-                "codigo_generacion": result.get("codigo_generacion"),
-                "numero_control": result.get("numero_control"),
-                "sello_recepcion": result.get("sello_recepcion"),
-                "receptor_nombre": dte_payload["receptor"].get("nombre"),
-                "receptor_nit": dte_payload["receptor"].get("nit"),
-                "monto": dte_payload["items"][0]["precio_unitario"] * dte_payload["items"][0]["cantidad"],
-                "plan_name": dte_payload["items"][0]["descripcion"],
-                "raw_json": dte_json,
-                "mh_response": result,
-                "status": "procesado" if result.get("sello_recepcion") else "error",
+                "codigo_generacion": codigo_gen,
+                "numero_control": result["numero_control"],
+                "sello_recepcion": result["sello_recepcion"],
+                "receptor_nombre": receptor.get("nombre"),
+                "receptor_nit": receptor.get("nit"),
+                "monto": float(monto),
+                "plan_name": items[0].get("descripcion", ""),
+                "raw_json": dte_dict,
+                "mh_response": {"status": mh_result.status, "sello": mh_result.sello},
+                "status": "procesado" if mh_result.status == "PROCESADO" else "error",
             }).execute()
         except Exception as e:
-            # Don't fail the invoice if storage fails
             import logging
             logging.getLogger(__name__).warning(f"Failed to store billing invoice: {e}")
 
