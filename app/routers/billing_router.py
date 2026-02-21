@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.services.dte_service import DTEService
-from app.dependencies import get_supabase
+from app.dependencies import get_supabase, get_encryption
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +98,7 @@ def get_billing_mh_credentials() -> dict:
 async def create_auto_invoice(
     req: AutoInvoiceRequest,
     db=Depends(get_supabase),
+    encryption=Depends(get_encryption),
 ):
     """
     Generate a fiscal DTE for a subscription payment.
@@ -204,7 +205,7 @@ async def create_auto_invoice(
 
         # Use the DTE service to process, sign and transmit
         # We need to use Hugo's org credentials for MH auth
-        service = DTEService(db)
+        service = DTEService(supabase=db, encryption=encryption)
 
         # Direct emission using billing credentials
         result = await service.emit_billing_dte(
