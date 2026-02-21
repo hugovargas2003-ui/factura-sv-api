@@ -641,6 +641,9 @@ _dte_router = create_dte_router(
 )
 app.include_router(_dte_router)
 
+from app.routers.billing_router import router as billing_router
+app.include_router(billing_router)
+
 
 # ENTRYPOINT
 # ─────────────────────────────────────────────────────────────
