@@ -152,6 +152,7 @@ class DTEBuilder:
                 "descripcion": item["descripcion"], "precioUni": precio,
                 "montoDescu": 0.0, "ventaNoSuj": 0.0, "ventaExenta": 0.0,
                 "ventaGravada": vg, "tributos": ["20"] if vg > 0 else None,
+                "psv": 0.0, "noGravado": 0.0,
             })
         tg = round(sum(c["ventaGravada"] for c in cuerpo), 2)
         iva = round(tg * 0.13, 2)
@@ -164,6 +165,7 @@ class DTEBuilder:
             "subTotal": tg, "ivaPerci1": 0.0, "ivaRete1": 0.0, "reteRenta": 0.0,
             "montoTotalOperacion": mt, "totalNoGravado": 0.0, "totalPagar": mt,
             "totalLetras": self._monto_letras(mt),
+            "saldoFavor": 0.0,
             "condicionOperacion": kw.get("condicion_operacion", 1),
             "pagos": [{"codigo": "01", "montoPago": mt, "referencia": "", "plazo": None, "periodo": None}],
             "numPagoElectronico": None,
@@ -328,19 +330,21 @@ class DTEBuilder:
                 "codigo": item.get("codigo"), "cantidad": float(cant),
                 "uniMedida": item.get("unidad_medida", 59),
                 "descripcion": item["descripcion"], "precioUni": precio,
-                "montoDescu": 0.0, "ventaGravada": vg,
+                "montoDescu": 0.0, "ventaNoSuj": 0.0, "ventaExenta": 0.0,
+                "ventaGravada": vg,
                 "tributos": ["20"] if vg > 0 else None,
             })
         tg = round(sum(c["ventaGravada"] for c in cuerpo), 2)
         iva = round(tg * 0.13, 2)
         mt = round(tg + iva, 2)
         resumen = {
+            "totalNoSuj": 0.0, "totalExenta": 0.0,
             "totalGravada": tg, "subTotalVentas": tg,
             "descuNoSuj": 0.0, "descuExenta": 0.0, "descuGravada": 0.0,
-            "totalDescu": 0.0,
+            "porcentajeDescuento": 0.0, "totalDescu": 0.0,
             "tributos": [{"codigo": "20", "descripcion": "IVA 13%", "valor": iva}],
             "subTotal": tg, "ivaRete1": 0.0, "reteRenta": 0.0,
-            "montoTotalOperacion": mt, "totalPagar": mt,
+            "montoTotalOperacion": mt, "totalNoGravado": 0.0, "totalPagar": mt,
             "totalLetras": self._monto_letras(mt),
             "condicionOperacion": kw.get("condicion_operacion", 1),
             "pagos": [{"codigo": "01", "montoPago": mt, "referencia": "", "plazo": None, "periodo": None}],
@@ -356,6 +360,8 @@ class DTEBuilder:
         dte["documentoRelacionado"] = doc_rel
         dte["emisor"] = self._emisor_std()
         dte["receptor"] = self._rec_ccf(receptor)
+        dte["otrosDocumentos"] = None
+        dte["ventaTercero"] = None
         dte["cuerpoDocumento"] = cuerpo
         dte["resumen"] = resumen
         dte["extension"] = kw.get("extension")
@@ -407,6 +413,7 @@ class DTEBuilder:
         rec["codigoMH"] = receptor.get("codigo_mh")
         rec["puntoVentaMH"] = receptor.get("punto_venta_mh")
         dte = self._ident(kw, "09")
+        dte["documentoRelacionado"] = None
         dte["emisor"] = emisor_dcl
         dte["receptor"] = rec
         dte["cuerpoDocumento"] = cuerpo
