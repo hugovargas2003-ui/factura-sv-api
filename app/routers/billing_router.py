@@ -61,22 +61,26 @@ class AutoInvoiceResponse(BaseModel):
 # ============================================================
 
 def get_billing_emisor() -> dict:
-    """Get Efficient AI Algorithms' emisor config from env."""
+    """Get billing emisor config — must match MH-certified data exactly."""
     return {
-        "nit": os.getenv("BILLING_EMISOR_NIT", "0614-121271-103-3"),
-        "nrc": os.getenv("BILLING_EMISOR_NRC", "1549809"),
-        "nombre": os.getenv("BILLING_EMISOR_NOMBRE", "EFFICIENT AI ALGORITHMS"),
-        "cod_actividad": os.getenv("BILLING_EMISOR_ACTIVIDAD", "62010"),
-        "desc_actividad": os.getenv("BILLING_EMISOR_DESC_ACTIVIDAD",
-                                     "Actividades de programación informática"),
-        "nombre_comercial": "FACTURA-SV",
-        "tipo_establecimiento": "20",
-        "direccion_departamento": os.getenv("BILLING_EMISOR_DEPTO", "06"),
-        "direccion_municipio": os.getenv("BILLING_EMISOR_MUNICIPIO", "14"),
-        "direccion_complemento": os.getenv("BILLING_EMISOR_DIRECCION",
-                                      "San Salvador, El Salvador"),
-        "telefono": os.getenv("BILLING_EMISOR_TELEFONO", ""),
-        "correo": os.getenv("BILLING_EMISOR_CORREO", "hugovargas2003@gmail.com"),
+        "nit": "06141212711033",
+        "nrc": "1549809",
+        "nombre": "HUGO ERNESTO VARGAS OLIVA",
+        "codActividad": "58200",
+        "descActividad": "Edicion de programas informaticos",
+        "nombreComercial": "EFFICIENT AI ALGORITHMS",
+        "tipoEstablecimiento": "01",
+        "direccion": {
+            "departamento": "06",
+            "municipio": "14",
+            "complemento": "San Salvador, El Salvador"
+        },
+        "telefono": "00000000",
+        "correo": "hugovargas2003@gmail.com",
+        "codEstableMH": "M001",
+        "codEstable": "M001",
+        "codPuntoVentaMH": "P001",
+        "codPuntoVenta": "P001",
     }
 
 

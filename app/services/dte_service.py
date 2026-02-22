@@ -437,8 +437,8 @@ class DTEService:
         seq_result = self.db.rpc("get_next_numero_control", {
             "p_org_id": BILLING_ORG_ID,
             "p_tipo_dte": tipo_dte,
-            "p_cod_estab": "BILL",
-            "p_cod_pv": "B001",
+            "p_cod_estab": "M001",
+            "p_cod_pv": "P001",
         }).execute()
         if not seq_result.data:
             raise DTEServiceError("Error generando número de control para billing", "SEQ_ERROR")
@@ -462,12 +462,8 @@ class DTEService:
         if not pem_key:
             raise DTEServiceError("Clave privada de facturación no configurada", "NO_BILLING_KEY")
 
-        signed_jwt = pyjwt.encode(
-            payload=dte_dict,
-            key=pem_key,
-            algorithm="RS512",
-            headers={"typ": "JWS"},
-        )
+        from app.modules.sign_engine import SignEngine
+        signed_jwt = SignEngine.sign_with_pem(pem_key, dte_dict)
 
         # 3. Authenticate with MH (billing always uses PRODUCTION)
         nit = mh_credentials["nit"]
