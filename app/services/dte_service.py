@@ -477,8 +477,6 @@ class DTEService:
         Emit a DTE using billing credentials (for auto-invoicing).
         Uses PEM private key directly instead of .p12 certificate.
         """
-        import jwt as pyjwt
-
         tipo_dte = dte_payload["tipo_dte"]
         emisor_data = dte_payload["emisor"]
         receptor = dte_payload["receptor"]
