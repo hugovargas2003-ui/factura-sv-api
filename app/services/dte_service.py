@@ -492,7 +492,7 @@ class DTEService:
         result = {
             "codigo_generacion": codigo_gen,
             "numero_control": dte_dict.get("identificacion", {}).get("numeroControl"),
-            "sello_recepcion": mh_result.sello if mh_result.status == "PROCESADO" else None,
+            "sello_recepcion": mh_result.sello_recepcion if mh_result.status == "PROCESADO" else None,
             "estado": mh_result.status,
         }
 
@@ -510,7 +510,7 @@ class DTEService:
                 "monto": float(monto),
                 "plan_name": items[0].get("descripcion", ""),
                 "raw_json": dte_dict,
-                "mh_response": {"status": mh_result.status, "sello": mh_result.sello},
+                "mh_response": {"status": mh_result.status, "sello": mh_result.sello_recepcion},
                 "status": "procesado" if mh_result.status == "PROCESADO" else "error",
             }).execute()
         except Exception as e:
