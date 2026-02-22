@@ -138,6 +138,8 @@ class DTEBuilder:
 
     # === NR (04) v3 ===
     def _build_nr(self, **kw) -> dict:
+        """Nota de Remisión (04) v3 - Schema: fe-nr-v3.json
+        Items: 14 fields only. Resumen: 13 fields only. No pagos/condicion."""
         items, receptor = kw["items"], kw["receptor"]
         cuerpo = []
         for i, item in enumerate(items, 1):
@@ -147,12 +149,11 @@ class DTEBuilder:
             cuerpo.append({
                 "numItem": i, "tipoItem": item.get("tipo_item", 2),
                 "numeroDocumento": None, "codigo": item.get("codigo"),
-                "codTributo": None, "cantidad": float(cant),
-                "uniMedida": item.get("unidad_medida", 59),
-                "descripcion": item["descripcion"], "precioUni": precio,
-                "montoDescu": 0.0, "ventaNoSuj": 0.0, "ventaExenta": 0.0,
+                "codTributo": None, "descripcion": item["descripcion"],
+                "cantidad": float(cant), "uniMedida": item.get("unidad_medida", 59),
+                "precioUni": precio, "montoDescu": 0.0,
+                "ventaNoSuj": 0.0, "ventaExenta": 0.0,
                 "ventaGravada": vg, "tributos": ["20"] if vg > 0 else None,
-                "psv": 0.0, "noGravado": 0.0,
             })
         tg = round(sum(c["ventaGravada"] for c in cuerpo), 2)
         iva = round(tg * 0.13, 2)
@@ -162,13 +163,8 @@ class DTEBuilder:
             "subTotalVentas": tg, "descuNoSuj": 0.0, "descuExenta": 0.0,
             "descuGravada": 0.0, "porcentajeDescuento": 0.0, "totalDescu": 0.0,
             "tributos": [{"codigo": "20", "descripcion": "Impuesto al Valor Agregado 13%", "valor": iva}],
-            "subTotal": tg, "ivaPerci1": 0.0, "ivaRete1": 0.0, "reteRenta": 0.0,
-            "montoTotalOperacion": mt, "totalNoGravado": 0.0, "totalPagar": mt,
+            "subTotal": tg, "montoTotalOperacion": mt,
             "totalLetras": self._monto_letras(mt),
-            "saldoFavor": 0.0,
-            "condicionOperacion": kw.get("condicion_operacion", 1),
-            "pagos": [{"codigo": "01", "montoPago": mt, "referencia": "", "plazo": None, "periodo": None}],
-            "numPagoElectronico": None,
         }
         rec = {
             "tipoDocumento": receptor.get("tipo_documento", "36"),
@@ -177,11 +173,11 @@ class DTEBuilder:
             "codActividad": receptor.get("cod_actividad"),
             "descActividad": receptor.get("desc_actividad"),
             "nombreComercial": receptor.get("nombre_comercial"),
-            "bienTitulo": receptor.get("bien_titulo", "04"),
             "direccion": {"departamento": receptor.get("direccion_departamento", "06"),
                           "municipio": receptor.get("direccion_municipio", "14"),
                           "complemento": receptor.get("direccion_complemento", "San Salvador")},
             "telefono": receptor.get("telefono"), "correo": receptor.get("correo"),
+            "bienTitulo": receptor.get("bien_titulo", "04"),
         }
         dte = self._ident(kw, "04")
         dte["documentoRelacionado"] = None
@@ -318,50 +314,44 @@ class DTEBuilder:
 
     # === CL (08) v1 ===
     def _build_cl(self, **kw) -> dict:
+        """Comprobante de Liquidación (08) v1 - Schema: fe-cl-v1.json
+        Items are document references, NOT products.
+        TOP: NO documentoRelacionado/otrosDocumentos/ventaTercero."""
         items, receptor = kw["items"], kw["receptor"]
         ref = kw.get("dte_referencia") or {}
         cuerpo = []
         for i, item in enumerate(items, 1):
-            precio = round(item["precio_unitario"], 2)
-            cant = item.get("cantidad", 1)
-            vg = round(precio * cant, 2)
+            vg = round(item.get("precio_unitario", 0) * item.get("cantidad", 1), 2)
+            iva_item = round(vg * 0.13, 2)
             cuerpo.append({
-                "numItem": i, "tipoItem": item.get("tipo_item", 2),
-                "codigo": item.get("codigo"), "cantidad": float(cant),
-                "uniMedida": item.get("unidad_medida", 59),
-                "descripcion": item["descripcion"], "precioUni": precio,
-                "montoDescu": 0.0, "ventaNoSuj": 0.0, "ventaExenta": 0.0,
-                "ventaGravada": vg,
+                "numItem": i,
+                "tipoDte": ref.get("tipo_dte", "03"),
+                "tipoGeneracion": ref.get("tipo_generacion", 1),
+                "numeroDocumento": ref.get("codigo_generacion", "00010001000000001"),
+                "fechaGeneracion": ref.get("fecha_emision", _now_date()),
+                "ventaNoSuj": 0.0, "ventaExenta": 0.0,
+                "ventaGravada": vg, "exportaciones": 0.0,
                 "tributos": ["20"] if vg > 0 else None,
+                "ivaItem": iva_item,
+                "obsItem": item.get("descripcion", "Liquidacion"),
             })
         tg = round(sum(c["ventaGravada"] for c in cuerpo), 2)
-        iva = round(tg * 0.13, 2)
+        iva = round(sum(c["ivaItem"] for c in cuerpo), 2)
         mt = round(tg + iva, 2)
         resumen = {
-            "totalNoSuj": 0.0, "totalExenta": 0.0,
-            "totalGravada": tg, "subTotalVentas": tg,
-            "descuNoSuj": 0.0, "descuExenta": 0.0, "descuGravada": 0.0,
-            "porcentajeDescuento": 0.0, "totalDescu": 0.0,
-            "tributos": [{"codigo": "20", "descripcion": "IVA 13%", "valor": iva}],
-            "subTotal": tg, "ivaRete1": 0.0, "reteRenta": 0.0,
-            "montoTotalOperacion": mt, "totalNoGravado": 0.0, "totalPagar": mt,
+            "totalNoSuj": 0.0, "totalExenta": 0.0, "totalGravada": tg,
+            "totalExportacion": 0.0, "subTotalVentas": tg,
+            "tributos": [{"codigo": "20", "descripcion": "Impuesto al Valor Agregado 13%", "valor": iva}],
+            "montoTotalOperacion": mt, "ivaPerci": 0.0,
+            "total": mt,
             "totalLetras": self._monto_letras(mt),
             "condicionOperacion": kw.get("condicion_operacion", 1),
-            "pagos": [{"codigo": "01", "montoPago": mt, "referencia": "", "plazo": None, "periodo": None}],
-            "numPagoElectronico": None,
         }
-        doc_rel = None
-        if ref:
-            doc_rel = [{"tipoDocumento": ref.get("tipo_dte", "03"),
-                        "tipoGeneracion": ref.get("tipo_generacion", 1),
-                        "numeroDocumento": ref.get("codigo_generacion", "00010001000000001"),
-                        "fechaEmision": ref.get("fecha_emision", _now_date())}]
         dte = self._ident(kw, "08")
-        dte["documentoRelacionado"] = doc_rel
+        dte["identificacion"].pop("tipoContingencia", None)
+        dte["identificacion"].pop("motivoContin", None)
         dte["emisor"] = self._emisor_std()
         dte["receptor"] = self._rec_ccf(receptor)
-        dte["otrosDocumentos"] = None
-        dte["ventaTercero"] = None
         dte["cuerpoDocumento"] = cuerpo
         dte["resumen"] = resumen
         dte["extension"] = kw.get("extension")
@@ -389,7 +379,7 @@ class DTEBuilder:
             "valorOperaciones": val_op, "montoSinPercepcion": 0.0,
             "descripSinPercepcion": None, "subTotal": val_op, "iva": iva,
             "montoSujetoPercepcion": msp, "ivaPercibido": ip,
-            "comision": com, "porcentComision": pct, "ivaComision": ic,
+            "comision": com, "porcentComision": str(pct), "ivaComision": ic,
             "liquidoApagar": liq, "totalLetras": self._monto_letras(liq),
             "observaciones": kw.get("observaciones"),
         }
@@ -413,7 +403,8 @@ class DTEBuilder:
         rec["codigoMH"] = receptor.get("codigo_mh")
         rec["puntoVentaMH"] = receptor.get("punto_venta_mh")
         dte = self._ident(kw, "09")
-        dte["documentoRelacionado"] = None
+        dte["identificacion"].pop("tipoContingencia", None)
+        dte["identificacion"].pop("motivoContin", None)
         dte["emisor"] = emisor_dcl
         dte["receptor"] = rec
         dte["cuerpoDocumento"] = cuerpo
