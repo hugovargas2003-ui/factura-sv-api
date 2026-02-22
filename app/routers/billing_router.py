@@ -61,26 +61,24 @@ class AutoInvoiceResponse(BaseModel):
 # ============================================================
 
 def get_billing_emisor() -> dict:
-    """Get billing emisor config — must match MH-certified data exactly."""
+    """Get billing emisor config — must match MH-certified data exactly.
+    Keys use snake_case to match SaaS DTEBuilder expectations.
+    Values match the MH-certified registration."""
     return {
         "nit": "06141212711033",
         "nrc": "1549809",
         "nombre": "HUGO ERNESTO VARGAS OLIVA",
-        "codActividad": "58200",
-        "descActividad": "Edicion de programas informaticos",
-        "nombreComercial": "EFFICIENT AI ALGORITHMS",
-        "tipoEstablecimiento": "01",
-        "direccion": {
-            "departamento": "06",
-            "municipio": "14",
-            "complemento": "San Salvador, El Salvador"
-        },
+        "cod_actividad": "58200",
+        "desc_actividad": "Edicion de programas informaticos",
+        "nombre_comercial": "EFFICIENT AI ALGORITHMS",
+        "tipo_establecimiento": "01",
+        "direccion_departamento": "06",
+        "direccion_municipio": "14",
+        "direccion_complemento": "San Salvador, El Salvador",
         "telefono": "00000000",
         "correo": "hugovargas2003@gmail.com",
-        "codEstableMH": "M001",
-        "codEstable": "M001",
-        "codPuntoVentaMH": "P001",
-        "codPuntoVenta": "P001",
+        "codigo_establecimiento": "M001",
+        "codigo_punto_venta": "P001",
     }
 
 

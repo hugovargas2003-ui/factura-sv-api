@@ -759,7 +759,7 @@ class DTEBuilder:
                    resumen: dict | None = None, extension: dict | None = None,
                    observaciones: str | None = None) -> dict:
         dte = self._wrap_identificacion(tipo_dte, version, numero_control, codigo_generacion)
-        dte["emisor"] = self._format_emisor_ccf() if tipo_dte in ("03","04","05","06","07","08","09","15") else self._format_emisor_factura()
+        dte["emisor"] = self._format_emisor_dcl() if tipo_dte == "09" else self._format_emisor_factura()
         dte["receptor"] = receptor
         dte["cuerpoDocumento"] = cuerpo_documento
         if resumen:
@@ -793,6 +793,12 @@ class DTEBuilder:
         }
 
     def _format_emisor_ccf(self) -> dict:
+        """CCF/NR/NC/ND/CR/LIQ/CD use same field names as Factura.
+        Only DCL (09) uses codigoMH/codigo/puntoVentaMH/puntoVentaContri."""
+        return self._format_emisor_factura()
+
+    def _format_emisor_dcl(self) -> dict:
+        """DCL (09) uses different field names for establishment codes."""
         base = self._format_emisor_factura()
         base["codigoMH"] = base.pop("codEstableMH", None)
         base["codigo"] = base.pop("codEstable", None)
