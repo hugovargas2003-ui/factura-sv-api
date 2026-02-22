@@ -411,4 +411,6 @@ async def test_dte_type(
             "observaciones": mh_result.observaciones,
         }
     except Exception as e:
-        return {"success": False, "tipo_dte": tipo_dte, "error": str(e), "traceback": traceback.format_exc(), "dte_json": dte_dict if "dte_dict" in dir() else None}
+        obs = getattr(e, "observaciones", [])
+        mh_resp = getattr(e, "mh_response", None)
+        return {"success": False, "tipo_dte": tipo_dte, "error": str(e), "observaciones": obs, "mh_response": mh_resp, "traceback": traceback.format_exc(), "dte_json": dte_dict if "dte_dict" in dir() else None}
