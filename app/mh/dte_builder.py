@@ -181,7 +181,7 @@ class DTEBuilder:
                           "complemento": receptor.get("direccion_complemento", "San Salvador")},
             "telefono": receptor.get("telefono"), "correo": receptor.get("correo"),
         }
-        dte = self._ident(kw)
+        dte = self._ident(kw, "04")
         dte["documentoRelacionado"] = None
         dte["emisor"] = self._emisor_std()
         dte["receptor"] = rec
@@ -245,7 +245,7 @@ class DTEBuilder:
                           "complemento": e["direccion_complemento"]},
             "telefono": e["telefono"], "correo": e["correo"],
         }
-        dte = self._ident(kw)
+        dte = self._ident(kw, tipo)
         dte["documentoRelacionado"] = doc_rel
         dte["emisor"] = emisor_nota
         dte["receptor"] = self._rec_ccf(receptor)
@@ -306,7 +306,7 @@ class DTEBuilder:
                           "complemento": receptor.get("direccion_complemento", "San Salvador")},
             "telefono": receptor.get("telefono"), "correo": receptor.get("correo"),
         }
-        dte = self._ident(kw)
+        dte = self._ident(kw, "07")
         dte["emisor"] = emisor_cr
         dte["receptor"] = rec
         dte["cuerpoDocumento"] = cuerpo
@@ -352,7 +352,7 @@ class DTEBuilder:
                         "tipoGeneracion": ref.get("tipo_generacion", 1),
                         "numeroDocumento": ref.get("codigo_generacion", "00010001000000001"),
                         "fechaEmision": ref.get("fecha_emision", _now_date())}]
-        dte = self._ident(kw)
+        dte = self._ident(kw, "08")
         dte["documentoRelacionado"] = doc_rel
         dte["emisor"] = self._emisor_std()
         dte["receptor"] = self._rec_ccf(receptor)
@@ -406,7 +406,7 @@ class DTEBuilder:
         rec["tipoEstablecimiento"] = receptor.get("tipo_establecimiento", "01")
         rec["codigoMH"] = receptor.get("codigo_mh")
         rec["puntoVentaMH"] = receptor.get("punto_venta_mh")
-        dte = self._ident(kw)
+        dte = self._ident(kw, "09")
         dte["emisor"] = emisor_dcl
         dte["receptor"] = rec
         dte["cuerpoDocumento"] = cuerpo
@@ -521,7 +521,7 @@ class DTEBuilder:
                           "complemento": receptor.get("direccion_complemento", "San Salvador")},
             "telefono": receptor.get("telefono"), "correo": receptor.get("correo"),
         }
-        dte = self._ident(kw)
+        dte = self._ident(kw, "14")
         dte["emisor"] = emisor_fse
         dte["sujetoExcluido"] = sujeto
         dte["cuerpoDocumento"] = cuerpo
@@ -571,7 +571,7 @@ class DTEBuilder:
         }
         otros = cd_p.get("otros_documentos", [{"codigoDocumento": "01",
                  "descDocumento": "Acta de donacion", "detalleDocumento": "Acta notarial"}])
-        dte = self._ident(kw)
+        dte = self._ident(kw, "15")
         dte["donante"] = donante
         dte["donatario"] = donatario
         dte["otrosDocumentos"] = otros
@@ -583,10 +583,10 @@ class DTEBuilder:
         return dte
 
     # === HELPERS ===
-    def _ident(self, kw) -> dict:
+    def _ident(self, kw, tipo_dte="01") -> dict:
         return {"identificacion": {
             "version": kw["version"], "ambiente": self.ambiente,
-            "tipoDte": kw.get("_tipo_dte", kw.get("tipo_dte", "01")),
+            "tipoDte": tipo_dte,
             "numeroControl": kw["numero_control"],
             "codigoGeneracion": kw["codigo_generacion"],
             "tipoModelo": 1, "tipoOperacion": 1,
