@@ -291,3 +291,124 @@ async def debug_billing_dte(
         "pem_key_preview": pem_key[:50] + "...",
         "pem_key_length": len(pem_key),
     }
+
+
+
+# ═══════════════════════════════════════════════════════════
+# TEMPORARY: Test all DTE types against MH production
+# Remove after validation complete
+# ═══════════════════════════════════════════════════════════
+
+@router.post("/test-dte-type")
+async def test_dte_type(
+    tipo_dte: str,
+    db=Depends(get_supabase),
+    encryption=Depends(get_encryption),
+):
+    """Test any DTE type against MH using billing credentials."""
+    import httpx
+    import traceback
+    from app.mh.dte_builder import DTEBuilder
+    from app.modules.sign_engine import SignEngine
+    from app.modules.auth_bridge import TokenInfo, MHEnvironment
+    from app.modules.transmit_service import transmit_service as ts
+
+    emisor = get_billing_emisor()
+    mh_creds = get_billing_mh_credentials()
+    BILLING_ORG_ID = "35505aeb-7343-4d50-b098-f713239685c3"
+
+    seq_result = db.rpc("get_next_numero_control", {
+        "p_org_id": BILLING_ORG_ID, "p_tipo_dte": tipo_dte,
+        "p_cod_estab": "M001", "p_cod_pv": "P001",
+    }).execute()
+    if not seq_result.data:
+        return {"error": "Sequence error"}
+    numero_control = seq_result.data[0]["numero_control"]
+
+    builder = DTEBuilder(emisor=emisor, ambiente="01")
+
+    rec_ccf = {
+        "nit": "06140711071030", "nrc": "1832035",
+        "nombre": "OD EL SALVADOR LTDA, DE C.V.",
+        "cod_actividad": "46592",
+        "desc_actividad": "Venta al por mayor de maquinaria equipo accesorios y materiales para la industria grafica",
+        "nombre_comercial": "OD EL SALVADOR LTDA, DE C.V.",
+        "direccion_departamento": "06", "direccion_municipio": "23",
+        "direccion_complemento": "PASEO GENERAL ESCALON ENTRE 83 Y 85 AV SUR NO 1323",
+        "telefono": "22604050", "correo": "edith.fernandez@officedepot.com.sv",
+    }
+    rec_cf = {
+        "tipo_documento": "36", "num_documento": "00000000000000",
+        "nombre": "Consumidor Final",
+        "direccion_departamento": "06", "direccion_municipio": "14",
+        "direccion_complemento": "San Salvador, El Salvador",
+        "telefono": "00000000", "correo": "consumidor@test.com",
+    }
+    items_std = [{"precio_unitario": 100.0, "descripcion": "Servicio de consultoria tecnologica",
+                  "codigo": "SERV001", "tipo_item": 1, "cantidad": 1}]
+    REF_CCF = "2970F022-E2CE-419E-8BC3-39ADF07593E6"
+
+    configs = {
+        "01": {"receptor": rec_cf, "items": items_std},
+        "03": {"receptor": rec_ccf, "items": items_std},
+        "04": {"receptor": {**rec_ccf, "tipo_documento": "36", "num_documento": "06140711071030", "bien_titulo": "04"}, "items": items_std},
+        "05": {"receptor": rec_ccf, "items": [{"precio_unitario": 10.0, "descripcion": "Ajuste NC", "codigo": "SERV001", "tipo_item": 1}],
+               "dte_referencia": {"tipo_dte": "03", "tipo_generacion": 2, "codigo_generacion": REF_CCF, "fecha_emision": "2026-02-22"}},
+        "06": {"receptor": rec_ccf, "items": [{"precio_unitario": 5.0, "descripcion": "Cargo ND", "codigo": "SERV001", "tipo_item": 1}],
+               "dte_referencia": {"tipo_dte": "03", "tipo_generacion": 2, "codigo_generacion": REF_CCF, "fecha_emision": "2026-02-22"}},
+        "07": {"receptor": rec_ccf, "items": [{"monto_sujeto": 500.0, "iva_retenido": 5.0, "tipo_dte_ref": "03", "tipo_generacion": 1,
+               "num_documento": "00010001000000001", "fecha_emision": "2026-02-22", "descripcion": "Retencion IVA 1%", "codigo_retencion": "22"}]},
+        "08": {"receptor": rec_ccf, "items": items_std,
+               "dte_referencia": {"tipo_dte": "03", "tipo_generacion": 1, "codigo_generacion": "00010001000000001", "fecha_emision": "2026-02-22"}},
+        "09": {"receptor": rec_ccf, "items": items_std,
+               "dcl_params": {"valor_operaciones": 1130.0, "porcentaje_comision": 5, "fecha_inicio": "2026-02-01", "fecha_fin": "2026-02-22", "codigo": "LIQ-0001", "cantidad_docs": 10}},
+        "11": {"receptor": {"tipo_documento": "37", "num_documento": "000000000", "nombre": "Foreign Client LLC", "nombre_comercial": "Foreign Client",
+               "cod_pais": "9300", "nombre_pais": "ESTADOS UNIDOS", "complemento": "123 Main St NY", "tipo_persona": 1, "desc_actividad": "Actividades varias",
+               "telefono": "0000000000", "correo": "client@foreign.com"}, "items": [{"precio_unitario": 500.0, "descripcion": "Servicio exportacion", "codigo": "SERV001"}]},
+        "14": {"receptor": {"tipo_documento": "13", "num_documento": "000000000", "nombre": "Juan Perez (Sujeto Excluido)",
+               "cod_actividad": "47190", "desc_actividad": "Venta al por menor en comercios no especializados",
+               "direccion_departamento": "06", "direccion_municipio": "14", "direccion_complemento": "San Salvador, El Salvador",
+               "telefono": "70001234", "correo": "excluido@test.com"}, "items": items_std},
+        "15": {"receptor": {"tipo_documento": "36", "num_documento": "06140711071030", "nit": "06140711071030", "nrc": "1832035",
+               "nombre": "OD EL SALVADOR LTDA, DE C.V.", "nombre_comercial": "OD EL SALVADOR LTDA, DE C.V.",
+               "cod_actividad": "46592", "desc_actividad": "Venta al por mayor de maquinaria",
+               "direccion_departamento": "06", "direccion_municipio": "23", "direccion_complemento": "PASEO GENERAL ESCALON",
+               "telefono": "22604050", "correo": "edith.fernandez@officedepot.com.sv", "cod_pais": "9300"},
+               "items": [{"descripcion": "Computadoras donadas", "valor": 1000.0, "codigo": "DON001", "tipo_item": 1}]},
+    }
+
+    cfg = configs.get(tipo_dte)
+    if not cfg:
+        return {"error": f"Tipo {tipo_dte} no configurado"}
+
+    try:
+        dte_dict, codigo_gen = builder.build(tipo_dte=tipo_dte, numero_control=numero_control, **cfg)
+        signed_jws = SignEngine.sign_with_pem(mh_creds["private_key_pem"], dte_dict)
+
+        # Authenticate
+        nit = mh_creds["nit"]
+        auth_url = "https://api.dtes.mh.gob.sv/seguridad/auth"
+        async with httpx.AsyncClient(timeout=30.0, verify=True) as client:
+            auth_resp = await client.post(auth_url, data={"user": nit, "pwd": mh_creds["password"]})
+        auth_data = auth_resp.json()
+        if auth_resp.status_code != 200:
+            return {"error": f"Auth failed: {auth_data}"}
+        body = auth_data.get("body", auth_data)
+        raw_token = body["token"].replace("Bearer ", "") if body["token"].startswith("Bearer ") else body["token"]
+        token_info = TokenInfo(token=raw_token, nit=nit, environment=MHEnvironment.PRODUCTION)
+
+        # Transmit
+        mh_result = await ts.transmit(token_info=token_info, signed_dte=signed_jws,
+                                       tipo_dte=tipo_dte, codigo_generacion=codigo_gen)
+
+        return {
+            "success": mh_result.status == "PROCESADO",
+            "tipo_dte": tipo_dte, "codigo_generacion": codigo_gen,
+            "numero_control": numero_control,
+            "estado": mh_result.status,
+            "sello_recepcion": mh_result.sello_recepcion if mh_result.status == "PROCESADO" else None,
+            "descripcion": mh_result.descripcion_msg,
+            "observaciones": mh_result.observaciones,
+        }
+    except Exception as e:
+        return {"success": False, "tipo_dte": tipo_dte, "error": str(e), "traceback": traceback.format_exc()}
