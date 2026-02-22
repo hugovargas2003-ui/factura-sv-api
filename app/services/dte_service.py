@@ -344,6 +344,54 @@ class DTEService:
     # INTERNOS
     # ══════════════════════════════════════════════════════════
 
+    # ══════════════════════════════════════════════════════════
+    # CONTINGENCIA
+    # ══════════════════════════════════════════════════════════
+
+    async def notificar_contingencia(
+        self, org_id: str, user_id: str,
+        motivo: str, fecha_inicio: str, hora_inicio: str,
+        fecha_fin: str, hora_fin: str,
+        detalle_dte: list[dict],
+    ) -> dict:
+        """Notify MH of a contingency event with affected DTEs."""
+        from app.modules.contingency_service import contingency_service, ContingencyError
+
+        creds = await self._get_credentials(org_id)
+        if not creds.get("certificate_encrypted"):
+            raise DTEServiceError("Suba su certificado .p12", "NO_CERT")
+
+        cont_doc = contingency_service.build_contingency_document(
+            nit_emisor=creds["nit"],
+            nombre_emisor=creds["nombre"],
+            nombre_comercial=creds.get("nombre_comercial"),
+            cod_establecimiento=creds.get("codigo_establecimiento", "M001"),
+            cod_punto_venta=creds.get("codigo_punto_venta", "P001"),
+            telefono=creds.get("telefono", "00000000"),
+            correo=creds.get("correo", ""),
+            motivo=motivo,
+            fecha_inicio=fecha_inicio, hora_inicio=hora_inicio,
+            fecha_fin=fecha_fin, hora_fin=hora_fin,
+            detalle_dte=detalle_dte,
+        )
+
+        cert_bytes = self.encryption.decrypt(
+            bytes.fromhex(creds["certificate_encrypted"]), org_id)
+        cert_pwd = self.encryption.decrypt_string(
+            bytes.fromhex(creds["cert_password_encrypted"]), org_id)
+        cert_session = sign_engine.load_certificate(cert_bytes, cert_pwd)
+
+        try:
+            token_info = await self._authenticate_mh(org_id, creds)
+            result = await contingency_service.notify(
+                token_info=token_info, cert_session=cert_session,
+                contingency_doc=cont_doc,
+            )
+        finally:
+            cert_session.destroy()
+
+        return result
+
     async def _get_credentials(self, org_id: str) -> dict:
         result = self.db.table("mh_credentials").select("*").eq(
             "org_id", org_id).maybe_single().execute()

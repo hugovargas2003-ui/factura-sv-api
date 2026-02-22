@@ -271,7 +271,32 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             },
         )
 
-    # ── CONSULTA DTEs ──
+    @router.post("/dte/contingencia")
+    async def notificar_contingencia(
+        data: ContingencyRequest,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Notificar contingencia al MH."""
+        # Parse fecha_inicio/fecha_fin into date and time parts
+        fi = data.fecha_inicio
+        ff = data.fecha_fin
+        # Support both "YYYY-MM-DD" and "YYYY-MM-DDTHH:MM:SS" formats
+        fec_inicio = fi[:10] if len(fi) >= 10 else fi
+        hor_inicio = fi[11:19] if len(fi) > 10 else "00:00:00"
+        fec_fin = ff[:10] if len(ff) >= 10 else ff
+        hor_fin = ff[11:19] if len(ff) > 10 else "23:59:59"
+
+        return await service.notificar_contingencia(
+            org_id=user["org_id"],
+            user_id=user["user_id"],
+            motivo=data.motivo,
+            fecha_inicio=fec_inicio, hora_inicio=hor_inicio,
+            fecha_fin=fec_fin, hora_fin=hor_fin,
+            detalle_dte=data.detalle_dte,
+        )
+
+        # ── CONSULTA DTEs ──
 
     @router.get("/dte/list")
     async def list_dtes(
