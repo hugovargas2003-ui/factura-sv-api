@@ -234,3 +234,58 @@ async def create_auto_invoice(
             tipo_dte=tipo_dte if 'tipo_dte' in dir() else "",
             error=str(e),
         )
+
+
+@router.post("/debug-dte")
+async def debug_billing_dte(
+    payload: AutoInvoiceRequest,
+    db=Depends(get_supabase),
+    encryption=Depends(get_encryption),
+):
+    """Temporary debug endpoint - returns DTE JSON + signed JWT without transmitting."""
+    import jwt as pyjwt, json, base64
+    mh_creds = get_billing_mh_credentials()
+    service = DTEService(supabase=db, encryption=encryption)
+    
+    dte_payload = service._build_billing_dte_payload(payload, mh_creds)
+    tipo_dte = dte_payload["tipo_dte"]
+    emisor_data = dte_payload["emisor"]
+    receptor = dte_payload["receptor"]
+    items = dte_payload["items"]
+    
+    BILLING_ORG_ID = "35505aeb-7343-4d50-b098-f713239685c3"
+    from app.mh.dte_builder import DTEBuilder
+    
+    seq_result = service.db.rpc("get_next_numero_control", {
+        "p_org_id": BILLING_ORG_ID,
+        "p_tipo_dte": tipo_dte,
+        "p_cod_estab": "BILL",
+        "p_cod_pv": "B001",
+    }).execute()
+    numero_control = seq_result.data[0]["numero_control"]
+    
+    builder = DTEBuilder(emisor=emisor_data, ambiente="01")
+    dte_dict, codigo_gen = builder.build(
+        tipo_dte=tipo_dte,
+        numero_control=numero_control,
+        receptor=receptor,
+        items=items,
+        condicion_operacion=dte_payload.get("condicion_operacion", 1),
+    )
+    
+    pem_key = mh_creds.get("private_key_pem", "")
+    signed_jwt = pyjwt.encode(payload=dte_dict, key=pem_key, algorithm="RS256")
+    
+    # Decode to verify
+    header = pyjwt.get_unverified_header(signed_jwt)
+    
+    return {
+        "dte_json": dte_dict,
+        "jwt_header": header,
+        "signed_jwt_preview": signed_jwt[:100] + "...",
+        "signed_jwt_length": len(signed_jwt),
+        "codigo_generacion": codigo_gen,
+        "numero_control": numero_control,
+        "pem_key_preview": pem_key[:50] + "...",
+        "pem_key_length": len(pem_key),
+    }
