@@ -759,8 +759,11 @@ class DTEBuilder:
                    resumen: dict | None = None, extension: dict | None = None,
                    observaciones: str | None = None) -> dict:
         dte = self._wrap_identificacion(tipo_dte, version, numero_control, codigo_generacion)
+        dte["documentoRelacionado"] = None
         dte["emisor"] = self._format_emisor_dcl() if tipo_dte == "09" else self._format_emisor_factura()
         dte["receptor"] = receptor
+        dte["otrosDocumentos"] = None
+        dte["ventaTercero"] = None
         dte["cuerpoDocumento"] = cuerpo_documento
         if resumen:
             dte["resumen"] = resumen
@@ -824,10 +827,22 @@ class DTEBuilder:
         }
 
     def _format_receptor_ccf(self, r: dict) -> dict:
-        base = self._format_receptor_factura(r)
-        base["nombreComercial"] = r.get("nombre_comercial")
-        base["tipoEstablecimiento"] = r.get("tipo_establecimiento", "01")
-        return base
+        """CCF receptor uses nit directly (not tipoDocumento/numDocumento like Factura)."""
+        return {
+            "nit": r.get("nit") or r.get("num_documento"),
+            "nrc": r.get("nrc"),
+            "nombre": r["nombre"],
+            "codActividad": r.get("cod_actividad"),
+            "descActividad": r.get("desc_actividad"),
+            "nombreComercial": r.get("nombre_comercial"),
+            "direccion": {
+                "departamento": r.get("direccion_departamento", "06"),
+                "municipio": r.get("direccion_municipio", "14"),
+                "complemento": r.get("direccion_complemento", "San Salvador"),
+            },
+            "telefono": r.get("telefono"),
+            "correo": r.get("correo"),
+        }
 
     @staticmethod
     def _monto_letras(monto: float) -> str:
