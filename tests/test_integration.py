@@ -20,6 +20,8 @@ Requisitos:
 """
 
 import sys
+import pytest
+pytestmark = pytest.mark.skip(reason="Standalone script, not a pytest test")
 import argparse
 import time
 
