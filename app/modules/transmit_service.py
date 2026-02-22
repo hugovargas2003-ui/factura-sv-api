@@ -49,10 +49,10 @@ logger = logging.getLogger(__name__)
 DTE_SCHEMA_VERSIONS: dict[str, int] = {
     "01": 1,   # Factura
     "03": 3,   # CCF
-    "04": 1,   # Nota de Remisión
+    "04": 3,   # Nota de Remisión
     "05": 3,   # Nota de Crédito
     "06": 3,   # Nota de Débito
-    "07": 3,   # Comprobante de Retención
+    "07": 1,   # Comprobante de Retención
     "08": 1,   # Comprobante de Liquidación
     "09": 1,   # Documento Contable de Liquidación
     "11": 1,   # Factura de Exportación
