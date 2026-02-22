@@ -333,7 +333,7 @@ async def test_dte_type(
         "cod_actividad": "46592",
         "desc_actividad": "Venta al por mayor de maquinaria equipo accesorios y materiales para la industria grafica",
         "nombre_comercial": "OD EL SALVADOR LTDA, DE C.V.",
-        "direccion_departamento": "06", "direccion_municipio": "23",
+        "direccion_departamento": "06", "direccion_municipio": "14",
         "direccion_complemento": "PASEO GENERAL ESCALON ENTRE 83 Y 85 AV SUR NO 1323",
         "telefono": "22604050", "correo": "edith.fernandez@officedepot.com.sv",
     }
