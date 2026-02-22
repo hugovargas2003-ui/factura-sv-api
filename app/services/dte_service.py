@@ -285,10 +285,17 @@ class DTEService:
             nombre_emisor=creds["nombre"],
             nit_receptor=dte.get("receptor_nit", ""),
             nombre_receptor=dte.get("receptor_nombre", ""),
+            telefono_receptor=dte.get("receptor_telefono", "00000000"),
+            correo_receptor=dte.get("receptor_correo", ""),
             sello_recibido=dte["sello_recibido"],
             numero_control=dte["numero_control"],
             fecha_emision=str(dte["fecha_emision"]),
             monto_iva=float(dte.get("iva", 0)),
+            nombre_comercial_emisor=creds.get("nombre_comercial"),
+            cod_establecimiento=creds.get("codigo_establecimiento", "M001"),
+            cod_punto_venta=creds.get("codigo_punto_venta", "P001"),
+            telefono_emisor=creds.get("telefono", "00000000"),
+            correo_emisor=creds.get("correo", ""),
         )
 
         cert_bytes = self.encryption.decrypt(

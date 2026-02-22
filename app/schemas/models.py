@@ -173,12 +173,22 @@ class InvalidateRequest(BaseModel):
     # Datos del receptor (obligatorios — MH requiere datos exactos del receptor original)
     nit_receptor: str = Field(..., description="NIT del receptor del DTE original")
     nombre_receptor: str = Field(..., description="Nombre del receptor del DTE original")
+    tipo_documento_receptor: str = Field(default="36", description="Tipo doc receptor: 36=NIT, 13=DUI")
+    telefono_receptor: Optional[str] = Field(default="00000000", description="Teléfono receptor")
+    correo_receptor: Optional[str] = Field(default="", description="Correo receptor")
 
     # Datos del DTE original (necesarios para construir el documento de invalidación)
     sello_recibido: str = Field(..., description="Sello de recepción del DTE original (40 chars)")
     numero_control: str = Field(..., description="Número de control del DTE original")
     fecha_emision: str = Field(..., description="Fecha de emisión del DTE original (YYYY-MM-DD)")
     monto_iva: float = Field(default=0.0, description="IVA total del DTE original", ge=0)
+
+    # Datos extra emisor (para invalidación MH compliant)
+    nombre_comercial_emisor: Optional[str] = Field(default=None, description="Nombre comercial")
+    cod_establecimiento: Optional[str] = Field(default="M001")
+    cod_punto_venta: Optional[str] = Field(default="P001")
+    telefono_emisor: Optional[str] = Field(default="00000000")
+    correo_emisor: Optional[str] = Field(default="")
 
 
 class InvalidateResponse(BaseModel):
