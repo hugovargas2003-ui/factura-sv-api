@@ -379,7 +379,7 @@ class DTEBuilder:
             "valorOperaciones": val_op, "montoSinPercepcion": 0.0,
             "descripSinPercepcion": None, "subTotal": val_op, "iva": iva,
             "montoSujetoPercepcion": msp, "ivaPercibido": ip,
-            "comision": com, "porcentComision": f"{pct:.2f}", "ivaComision": ic,
+            "comision": com, "porcentComision": round(float(pct), 2), "ivaComision": ic,
             "liquidoApagar": liq, "totalLetras": self._monto_letras(liq),
             "observaciones": kw.get("observaciones"),
         }
