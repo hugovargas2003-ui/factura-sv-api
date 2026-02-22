@@ -130,6 +130,14 @@ class ProductoCatalogoRequest(BaseModel):
 # ROUTER FACTORY
 # ══════════════════════════════════════════════════════════
 
+
+class ContingencyRequest(BaseModel):
+    motivo: str = Field(..., min_length=5, max_length=500)
+    fecha_inicio: str = Field(..., description="Fecha/hora inicio: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS")
+    fecha_fin: str = Field(..., description="Fecha/hora fin: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS")
+    detalle_dte: list = Field(..., description="Lista de DTEs afectados")
+
+
 def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
     """
     Crea router DTE con inyección de dependencias.
