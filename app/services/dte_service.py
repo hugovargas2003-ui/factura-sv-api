@@ -465,7 +465,8 @@ class DTEService:
         signed_jwt = pyjwt.encode(
             payload=dte_dict,
             key=pem_key,
-            algorithm="RS256",
+            algorithm="RS512",
+            headers={"typ": "JWS"},
         )
 
         # 3. Authenticate with MH (billing always uses PRODUCTION)
