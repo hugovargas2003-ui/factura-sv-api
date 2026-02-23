@@ -176,14 +176,14 @@ class DTEBuilder:
         rec = {
             "tipoDocumento": receptor.get("tipo_documento", "36"),
             "numDocumento": receptor.get("num_documento") or receptor.get("nit"),
-            "nrc": _n(receptor.get("nrc"))), "nombre": receptor["nombre"],
-            "codActividad": _n(receptor.get("cod_actividad"))),
-            "descActividad": _n(receptor.get("desc_actividad"))),
-            "nombreComercial": _n(receptor.get("nombre_comercial")),
+            "nrc": _n(_n(_n(recepto_n(_n(_n(_n(_n(r.get("nrc"))))))))), "nombre": receptor["nombre"],
+            "codActividad": _n(_n(_n(_n(recepto_n(_n(_n(_n(_n(_n(r.get("cod_actividad"))))))))))),
+            "descActividad": _n(_n(_n(_n(recepto_n(_n(_n(_n(_n(_n(r.get("desc_actividad"))))))))))),
+            "nombreComercial": _n(_n(_n(_n(receptor.get("nombre_comercial"))))),
             "direccion": {"departamento": receptor.get("direccion_departamento", "06"),
                           "municipio": receptor.get("direccion_municipio", "14"),
                           "complemento": receptor.get("direccion_complemento", "San Salvador")},
-            "telefono": _n(receptor.get("telefono"))), "correo": _n(receptor.get("correo"))),
+            "telefono": _n(_n(_n(_n(_n(recepto_n(_n(_n(_n(_n(_n(_n(r.get("telefono"))))))))))))), "correo": _n(_n(_n(_n(_n(recepto_n(_n(_n(_n(_n(_n(_n(r.get("correo"))))))))))))),
             "bienTitulo": receptor.get("bien_titulo", "04"),
         }
         dte = self._ident(kw, "04")
@@ -301,15 +301,15 @@ class DTEBuilder:
         rec = {
             "tipoDocumento": receptor.get("tipo_documento", "36"),
             "numDocumento": receptor.get("num_documento") or receptor.get("nit"),
-            "nrc": _n(receptor.get("nrc"))), "nombre": receptor["nombre"],
-            "nombreComercial": _n(receptor.get("nombre_comercial")),
-            "codActividad": _n(receptor.get("cod_actividad"))),
-            "descActividad": _n(receptor.get("desc_actividad"))),
+            "nrc": _n(_n(_n(recepto_n(_n(_n(_n(_n(r.get("nrc"))))))))), "nombre": receptor["nombre"],
+            "nombreComercial": _n(_n(_n(_n(receptor.get("nombre_comercial"))))),
+            "codActividad": _n(_n(_n(_n(recepto_n(_n(_n(_n(_n(_n(r.get("cod_actividad"))))))))))),
+            "descActividad": _n(_n(_n(_n(recepto_n(_n(_n(_n(_n(_n(r.get("desc_actividad"))))))))))),
             "direccion": {"departamento": receptor.get("direccion_departamento", "06"),
                           "municipio": receptor.get("direccion_municipio", "20"),
                           "distrito": receptor.get("direccion_distrito", "01"),
                           "complemento": receptor.get("direccion_complemento", "San Salvador")},
-            "telefono": _n(receptor.get("telefono"))), "correo": _n(receptor.get("correo"))),
+            "telefono": _n(_n(_n(_n(_n(recepto_n(_n(_n(_n(_n(_n(_n(r.get("telefono"))))))))))))), "correo": _n(_n(_n(_n(_n(recepto_n(_n(_n(_n(_n(_n(_n(r.get("correo"))))))))))))),
         }
         dte = self._ident(kw, "07")
         dte["emisor"] = emisor_cr
@@ -455,13 +455,13 @@ class DTEBuilder:
             "tipoDocumento": receptor.get("tipo_documento", "37"),
             "numDocumento": receptor.get("num_documento", "000000000"),
             "nombre": receptor["nombre"],
-            "nombreComercial": _n(receptor.get("nombre_comercial")),
+            "nombreComercial": _n(_n(_n(_n(receptor.get("nombre_comercial"))))),
             "codPais": receptor.get("cod_pais", "9300"),
             "nombrePais": receptor.get("nombre_pais", "ESTADOS UNIDOS"),
             "complemento": receptor.get("complemento", receptor.get("direccion_complemento", "Exterior")),
             "tipoPersona": receptor.get("tipo_persona", 1),
-            "descActividad": _n(receptor.get("desc_actividad", "Actividades varias"))),
-            "telefono": _n(receptor.get("telefono"))), "correo": _n(receptor.get("correo"))),
+            "descActividad": _n(recepto_n(r.get("desc_actividad", "Actividades varias"))),
+            "telefono": _n(_n(_n(_n(_n(recepto_n(_n(_n(_n(_n(_n(_n(r.get("telefono"))))))))))))), "correo": _n(_n(_n(_n(_n(recepto_n(_n(_n(_n(_n(_n(_n(r.get("correo"))))))))))))),
         }
         dte = {"identificacion": {
             "version": kw["version"], "ambiente": self.ambiente, "tipoDte": "11",
@@ -519,12 +519,12 @@ class DTEBuilder:
             "tipoDocumento": receptor.get("tipo_documento", "13"),
             "numDocumento": receptor.get("num_documento", "000000000"),
             "nombre": receptor["nombre"],
-            "codActividad": _n(receptor.get("cod_actividad"))),
-            "descActividad": _n(receptor.get("desc_actividad"))),
+            "codActividad": _n(_n(_n(_n(recepto_n(_n(_n(_n(_n(_n(r.get("cod_actividad"))))))))))),
+            "descActividad": _n(_n(_n(_n(recepto_n(_n(_n(_n(_n(_n(r.get("desc_actividad"))))))))))),
             "direccion": {"departamento": receptor.get("direccion_departamento", "06"),
                           "municipio": receptor.get("direccion_municipio", "14"),
                           "complemento": receptor.get("direccion_complemento", "San Salvador")},
-            "telefono": _n(receptor.get("telefono"))), "correo": _n(receptor.get("correo"))),
+            "telefono": _n(_n(_n(_n(_n(recepto_n(_n(_n(_n(_n(_n(_n(r.get("telefono"))))))))))))), "correo": _n(_n(_n(_n(_n(recepto_n(_n(_n(_n(_n(_n(_n(r.get("correo"))))))))))))),
         }
         dte = self._ident(kw, "14")
         dte["emisor"] = emisor_fse
@@ -552,14 +552,14 @@ class DTEBuilder:
         donante = {
             "tipoDocumento": receptor.get("tipo_documento", "36"),
             "numDocumento": receptor.get("num_documento") or receptor.get("nit"),
-            "nrc": _n(receptor.get("nrc"))), "nombre": receptor["nombre"],
-            "nombreComercial": _n(receptor.get("nombre_comercial")),
-            "codActividad": _n(receptor.get("cod_actividad"))),
-            "descActividad": _n(receptor.get("desc_actividad"))),
+            "nrc": _n(_n(_n(recepto_n(_n(_n(_n(_n(r.get("nrc"))))))))), "nombre": receptor["nombre"],
+            "nombreComercial": _n(_n(_n(_n(receptor.get("nombre_comercial"))))),
+            "codActividad": _n(_n(_n(_n(recepto_n(_n(_n(_n(_n(_n(r.get("cod_actividad"))))))))))),
+            "descActividad": _n(_n(_n(_n(recepto_n(_n(_n(_n(_n(_n(r.get("desc_actividad"))))))))))),
             "direccion": {"departamento": receptor.get("direccion_departamento", "06"),
                           "municipio": receptor.get("direccion_municipio", "14"),
                           "complemento": receptor.get("direccion_complemento", "San Salvador")},
-            "telefono": _n(receptor.get("telefono"))), "correo": _n(receptor.get("correo"))),
+            "telefono": _n(_n(_n(_n(_n(recepto_n(_n(_n(_n(_n(_n(_n(r.get("telefono"))))))))))))), "correo": _n(_n(_n(_n(_n(recepto_n(_n(_n(_n(_n(_n(_n(r.get("correo"))))))))))))),
             "codPais": receptor.get("cod_pais", "9300"),
         }
         e = self.emisor
@@ -634,26 +634,26 @@ class DTEBuilder:
         return {
             "tipoDocumento": r.get("tipo_documento", "36"),
             "numDocumento": r.get("num_documento"),
-            "nrc": _n(r.get("nrc")), "nombre": r["nombre"],
-            "codActividad": _n(r.get("cod_actividad")),
-            "descActividad": _n(r.get("desc_actividad")),
+            "nrc": _n(_n(_n(_n(_n(r.get("nrc")))))), "nombre": r["nombre"],
+            "codActividad": _n(_n(_n(_n(_n(_n(r.get("cod_actividad"))))))),
+            "descActividad": _n(_n(_n(_n(_n(_n(r.get("desc_actividad"))))))),
             "direccion": {"departamento": r.get("direccion_departamento", "06"),
                           "municipio": r.get("direccion_municipio", "14"),
                           "complemento": r.get("direccion_complemento", "San Salvador")},
-            "telefono": _n(r.get("telefono")), "correo": _n(r.get("correo")),
+            "telefono": _n(_n(_n(_n(_n(_n(_n(r.get("telefono")))))))), "correo": _n(_n(_n(_n(_n(_n(_n(r.get("correo")))))))),
         }
 
     def _rec_ccf(self, r: dict) -> dict:
         return {
             "nit": r.get("nit") or r.get("num_documento"),
-            "nrc": _n(r.get("nrc")), "nombre": r["nombre"],
-            "codActividad": _n(r.get("cod_actividad")),
-            "descActividad": _n(r.get("desc_actividad")),
+            "nrc": _n(_n(_n(_n(_n(r.get("nrc")))))), "nombre": r["nombre"],
+            "codActividad": _n(_n(_n(_n(_n(_n(r.get("cod_actividad"))))))),
+            "descActividad": _n(_n(_n(_n(_n(_n(r.get("desc_actividad"))))))),
             "nombreComercial": r.get("nombre_comercial"),
             "direccion": {"departamento": r.get("direccion_departamento", "06"),
                           "municipio": r.get("direccion_municipio", "14"),
                           "complemento": r.get("direccion_complemento", "San Salvador")},
-            "telefono": _n(r.get("telefono")), "correo": _n(r.get("correo")),
+            "telefono": _n(_n(_n(_n(_n(_n(_n(r.get("telefono")))))))), "correo": _n(_n(_n(_n(_n(_n(_n(r.get("correo")))))))),
         }
 
     @staticmethod

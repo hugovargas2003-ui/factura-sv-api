@@ -17,7 +17,18 @@ from app.modules.auth_bridge import auth_bridge, TokenInfo
 from app.modules.sign_engine import sign_engine, CertificateSession
 from app.modules.transmit_service import transmit_service
 from app.modules.invalidation_service import invalidation_service
-from app.mh.dte_builder import DTEBuilder, DTE_VERSIONS
+from app.mh.dte_builder import DTEBuilder
+
+
+def _sanitize_dte(d):
+    """Recursively convert empty strings to None for MH schema compliance."""
+    if isinstance(d, dict):
+        return {k: _sanitize_dte(v) for k, v in d.items()}
+    if isinstance(d, list):
+        return [_sanitize_dte(i) for i in d]
+    if isinstance(d, str) and d.strip() == "":
+        return None
+    return d, DTE_VERSIONS
 from app.schemas.models import InvalidateRequest, TipoResponsable
 
 logger = logging.getLogger("factura-sv.dte_service")
@@ -165,6 +176,7 @@ class DTEService:
             dte_referencia=dte_referencia,
             dcl_params=dcl_params, cd_params=cd_params,
         )
+        dte_dict = _sanitize_dte(dte_dict)
 
         # 5. Desencriptar .p12 y cargar en sign_engine
         cert_bytes = self.encryption.decrypt(
@@ -282,6 +294,7 @@ class DTEService:
             tipo_dte=tipo_dte, numero_control="DTE-XX-PREVIEW-000000000000000",
             receptor=receptor, items=items, **kwargs,
         )
+        dte_dict = _sanitize_dte(dte_dict)
         return dte_dict
 
     # ══════════════════════════════════════════════════════════
@@ -536,6 +549,7 @@ class DTEService:
             items=items,
             condicion_operacion=dte_payload.get("condicion_operacion", 1),
         )
+        dte_dict = _sanitize_dte(dte_dict)
 
         # Log DTE for debugging
         import json as jsonmod
