@@ -155,6 +155,13 @@ class TransmitService:
                 ) as client:
                     response = await client.post(url, json=payload, headers=headers)
 
+                # Log full MH response for debugging
+                try:
+                    resp_data = response.json()
+                    logger.info(f"MH Response: status={response.status_code}, body={resp_data}")
+                except Exception:
+                    logger.info(f"MH Response: status={response.status_code}, text={response.text[:500]}")
+
                 return self._parse_response(response, codigo_generacion)
 
             except TransmitError:

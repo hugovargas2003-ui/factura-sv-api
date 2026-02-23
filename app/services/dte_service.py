@@ -171,6 +171,8 @@ class DTEService:
             bytes.fromhex(creds["certificate_encrypted"]), org_id)
         cert_pwd = self.encryption.decrypt_string(
             bytes.fromhex(creds["cert_password_encrypted"]), org_id)
+        import json as _json
+        logger.info(f"DTE JSON to sign: {_json.dumps(dte_dict, ensure_ascii=False)[:500]}")
         cert_session: CertificateSession = sign_engine.load_certificate(cert_bytes, cert_pwd)
 
         try:
