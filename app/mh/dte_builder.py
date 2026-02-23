@@ -143,7 +143,7 @@ class DTEBuilder:
         items, receptor = kw["items"], kw["receptor"]
         cuerpo = []
         for i, item in enumerate(items, 1):
-            precio = round(item.get("precio_unitario", 0), 2)
+            precio = round(float(item.get("precio_unitario", 0)), 2)
             cant = item.get("cantidad", 1)
             vg = round(precio * cant, 2)
             cuerpo.append({
@@ -260,7 +260,7 @@ class DTEBuilder:
         cuerpo = []
         for i, item in enumerate(items, 1):
             monto = round(item["monto_sujeto"], 2)
-            iva_ret = round(item.get("iva_retenido", monto * 0.01), 2)
+            iva_ret = round(float(item.get("iva_retenido", monto * 0.01)), 2)
             cuerpo.append({
                 "numItem": i, "tipoDte": item.get("tipo_dte_ref", "03"),
                 "tipoGeneracion": item.get("tipo_generacion", 1),
@@ -321,7 +321,7 @@ class DTEBuilder:
         ref = kw.get("dte_referencia") or {}
         cuerpo = []
         for i, item in enumerate(items, 1):
-            vg = round(item.get("precio_unitario", 0) * item.get("cantidad", 1), 2)
+            vg = round(float(item.get("precio_unitario", 0)) * float(item.get("cantidad", 1)), 2)
             iva_item = round(vg * 0.13, 2)
             cuerpo.append({
                 "numItem": i,
@@ -362,7 +362,7 @@ class DTEBuilder:
     def _build_dcl(self, **kw) -> dict:
         receptor = kw["receptor"]
         params = kw.get("dcl_params") or {}
-        val_op = round(params.get("valor_operaciones", 1130.0), 2)
+        val_op = round(float(params.get("valor_operaciones", 1130.0)), 2)
         base = round(val_op / 1.13, 2)
         iva = round(val_op - base, 2)
         msp = base
