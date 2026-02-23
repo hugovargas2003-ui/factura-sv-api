@@ -371,6 +371,38 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             raise HTTPException(404, "DTE no encontrado")
         return result.data
 
+    @router.get("/dte/{dte_id}/pdf")
+    async def get_dte_pdf(
+        dte_id: str,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Generar representación gráfica PDF de un DTE."""
+        from fastapi.responses import Response
+        from app.services.pdf_generator import DTEPdfGenerator
+
+        result = service.db.table("dtes").select("*").eq(
+            "id", dte_id
+        ).eq("org_id", user["org_id"]).single().execute()
+
+        if not result.data:
+            raise HTTPException(404, "DTE no encontrado")
+
+        dte = result.data
+        generator = DTEPdfGenerator(
+            dte_json=dte.get("documento_json", {}),
+            sello=dte.get("sello_recibido"),
+            estado=dte.get("estado", "desconocido"),
+        )
+        pdf_bytes = generator.generate()
+
+        filename = f"DTE-{dte.get('tipo_dte', 'XX')}-{dte.get('numero_control', '000')}.pdf"
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"inline; filename={filename}"},
+        )
+
     # ── CATÁLOGO RECEPTORES ──
 
     @router.get("/receptores")
