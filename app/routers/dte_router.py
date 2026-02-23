@@ -162,20 +162,48 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
     @router.post("/config/certificate")
     async def upload_certificate(
         file: UploadFile = File(...),
+        password: str = "",
         service=Depends(get_dte_service),
         user=Depends(get_current_user),
     ):
-        """Subir certificado digital (.crt)."""
-        if not file.filename or not file.filename.endswith((".crt", ".pem", ".cer")):
-            raise HTTPException(400, "Archivo debe ser .crt, .pem o .cer")
+        """Subir certificado digital (.p12, .pfx, o .crt CertificadoMH)."""
+        if not file.filename:
+            raise HTTPException(400, "Archivo requerido")
+
+        fname = file.filename.lower()
+        valid_ext = (".p12", ".pfx", ".crt", ".pem", ".cer")
+        if not fname.endswith(valid_ext):
+            raise HTTPException(400, f"Archivo debe ser {', '.join(valid_ext)}")
 
         content = await file.read()
-        if len(content) > 50_000:  # 50KB max
-            raise HTTPException(400, "Certificado demasiado grande (máx 50KB)")
+        if len(content) > 100_000:
+            raise HTTPException(400, "Archivo demasiado grande (máx 100KB)")
 
-        return await service.save_certificate(
-            user["org_id"], content, file.filename
-        )
+        # If .crt/.pem/.cer → could be CertificadoMH XML, auto-convert to .p12
+        if fname.endswith((".crt", ".pem", ".cer")):
+            try:
+                from app.services.cert_converter import convert_mh_cert_to_p12
+                p12_bytes, p12_password = convert_mh_cert_to_p12(content)
+                # Save converted .p12
+                await service.save_certificate(
+                    user["org_id"], p12_bytes, file.filename.rsplit(".", 1)[0] + ".p12"
+                )
+                await service.save_certificate_password(user["org_id"], p12_password)
+                return {
+                    "success": True,
+                    "message": "CertificadoMH convertido a .p12 y guardado automáticamente",
+                    "converted": True,
+                }
+            except Exception as e:
+                # Fallback: save raw cert
+                await service.save_certificate(user["org_id"], content, file.filename)
+                return {"success": True, "message": f"Certificado guardado (sin conversión: {e})"}
+        else:
+            # .p12 / .pfx → save directly
+            await service.save_certificate(user["org_id"], content, file.filename)
+            if password:
+                await service.save_certificate_password(user["org_id"], password)
+            return {"success": True, "message": "Certificado .p12 guardado correctamente"}
 
     @router.post("/config/validate")
     async def validate_credentials(
