@@ -105,9 +105,9 @@ class AuthBridge:
             async with httpx.AsyncClient(timeout=30.0, verify=True) as client:
                 response = await client.post(
                     url,
-                    json=payload,
+                    data=payload,
                     headers={
-                        "Content-Type": "application/json",
+                        "Content-Type": "application/x-www-form-urlencoded",
                         "Accept": "application/json",
                     },
                 )
