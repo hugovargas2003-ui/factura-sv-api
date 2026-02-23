@@ -81,7 +81,7 @@ class DTEBuilder:
                 "codTributo": None, "cantidad": float(cant),
                 "uniMedida": item.get("unidad_medida", 59),
                 "descripcion": item["descripcion"], "precioUni": precio,
-                "montoDescu": round(item.get("descuento", 0), 2),
+                "montoDescu": round(float(item.get("descuento", 0)), 2),
                 "ventaNoSuj": 0.0, "ventaExenta": 0.0, "ventaGravada": vg,
                 "tributos": None, "psv": 0.0, "noGravado": 0.0,
                 "ivaItem": iva_item,
@@ -115,7 +115,7 @@ class DTEBuilder:
                 "codTributo": None, "cantidad": float(cant),
                 "uniMedida": item.get("unidad_medida", 59),
                 "descripcion": item["descripcion"], "precioUni": precio,
-                "montoDescu": round(item.get("descuento", 0), 2),
+                "montoDescu": round(float(item.get("descuento", 0)), 2),
                 "ventaNoSuj": 0.0, "ventaExenta": 0.0, "ventaGravada": vg,
                 "tributos": ["20"] if vg > 0 else None, "psv": 0.0, "noGravado": 0.0,
             })
@@ -537,7 +537,7 @@ class DTEBuilder:
                 "numItem": i, "tipoItem": item.get("tipo_item", 1),
                 "codigo": item.get("codigo"), "cantidad": float(item.get("cantidad", 1)),
                 "uniMedida": 99, "descripcion": item["descripcion"],
-                "valorDonacion": round(item.get("valor", item.get("precio_unitario", 100)), 2),
+                "valorDonacion": round(float(item.get("valor", item.get("precio_unitario", 100))), 2),
             })
         td = round(sum(c["valorDonacion"] for c in cuerpo), 2)
         resumen = {"totalDonacion": td, "totalLetras": self._monto_letras(td),
