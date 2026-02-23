@@ -25,10 +25,13 @@ class DTEPdfGenerator:
     """Genera PDF de representación gráfica de un DTE."""
 
     def __init__(self, dte_json: dict, sello: str | None = None,
-                 estado: str = "procesado"):
+                 estado: str = "procesado", logo_bytes: bytes | None = None,
+                 primary_color: tuple | None = None):
         self.dte = dte_json
         self.sello = sello
         self.estado = estado
+        self.logo_bytes = logo_bytes
+        self.primary_color = primary_color or (26, 60, 94)
         self.ident = dte_json.get("identificacion", {})
         self.emisor = dte_json.get("emisor", {})
         self.tipo_dte = self.ident.get("tipoDte", "01")
@@ -63,17 +66,31 @@ class DTEPdfGenerator:
         """Tipo de documento, número de control, código de generación."""
         nombre_dte = DTE_NOMBRES.get(self.tipo_dte, f"DTE TIPO {self.tipo_dte}")
 
+        r, g, b = self.primary_color
+        logo_h = 0
+        if self.logo_bytes:
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                    tmp.write(self.logo_bytes)
+                    tmp_path = tmp.name
+                pdf.image(tmp_path, x=10, y=10, h=14)
+                logo_h = 16
+                import os
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
         # Title bar
-        pdf.set_fill_color(26, 60, 94)  # Dark blue
-        pdf.rect(10, 10, 196, 14, "F")
+        pdf.set_fill_color(r, g, b)
+        pdf.rect(10, 10 + logo_h, 196, 14, "F")
         pdf.set_font("Helvetica", "B", 14)
         pdf.set_text_color(255, 255, 255)
-        pdf.set_xy(10, 12)
+        pdf.set_xy(10, 12 + logo_h)
         pdf.cell(196, 10, f"DOCUMENTO TRIBUTARIO ELECTRÓNICO", align="C")
 
-        pdf.set_xy(10, 26)
+        pdf.set_xy(10, 26 + logo_h)
         pdf.set_font("Helvetica", "B", 12)
-        pdf.set_text_color(26, 60, 94)
+        pdf.set_text_color(r, g, b)
         pdf.cell(196, 8, nombre_dte, align="C")
         pdf.ln(10)
 
@@ -104,7 +121,8 @@ class DTEPdfGenerator:
     def _section_title(self, pdf: FPDF, title: str):
         pdf.set_fill_color(230, 240, 250)
         pdf.set_font("Helvetica", "B", 9)
-        pdf.set_text_color(26, 60, 94)
+        r, g, b = self.primary_color
+        pdf.set_text_color(r, g, b)
         pdf.cell(196, 6, f"  {title}", fill=True, new_x="LMARGIN", new_y="NEXT")
         pdf.set_text_color(40, 40, 40)
 

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import date
+import base64
 from fastapi.responses import StreamingResponse
 import io
 
@@ -218,6 +219,57 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         """Validar credenciales intentando auth con MH."""
         return await service.validate_credentials(user["org_id"])
 
+    @router.post("/config/logo")
+    async def upload_logo(
+        file: UploadFile = File(...),
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Subir logo de la organización para PDFs."""
+        if not file.filename:
+            raise HTTPException(400, "Archivo requerido")
+        fname = file.filename.lower()
+        if not fname.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")):
+            raise HTTPException(400, "Formato no soportado. Use PNG, JPG o GIF.")
+        logo_content = await file.read()
+        if len(logo_content) > 500_000:
+            raise HTTPException(400, "Imagen demasiado grande (max 500KB)")
+        logo_b64 = base64.b64encode(logo_content).decode("utf-8")
+        ext = fname.rsplit(".", 1)[-1]
+        data_uri = f"data:image/{ext};base64,{logo_b64}"
+        service.db.table("mh_credentials").update({
+            "logo_base64": data_uri
+        }).eq("org_id", user["org_id"]).execute()
+        return {"success": True, "message": "Logo guardado", "size_kb": round(len(logo_content) / 1024, 1)}
+
+    @router.get("/config/logo")
+    async def get_logo(
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Obtener logo de la organización."""
+        result = service.db.table("mh_credentials").select(
+            "logo_base64"
+        ).eq("org_id", user["org_id"]).single().execute()
+        if not result.data or not result.data.get("logo_base64"):
+            raise HTTPException(404, "No hay logo configurado")
+        return {"logo_base64": result.data["logo_base64"]}
+
+    @router.put("/config/pdf-style")
+    async def update_pdf_style(
+        data: dict,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Actualizar colores del PDF."""
+        allowed = {"primary_color", "secondary_color"}
+        update = {k: v for k, v in data.items() if k in allowed}
+        if not update:
+            raise HTTPException(400, "No hay campos validos")
+        service.db.table("mh_credentials").update(update).eq(
+            "org_id", user["org_id"]).execute()
+        return {"success": True, "updated": list(update.keys())}
+
     @router.get("/config/emisor")
     async def get_emisor(
         service=Depends(get_dte_service),
@@ -422,10 +474,29 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             raise HTTPException(404, "DTE no encontrado")
 
         dte = result.data
+        # Fetch logo if available
+        logo_bytes = None
+        primary_color = None
+        try:
+            creds = service.db.table("mh_credentials").select(
+                "logo_base64, primary_color"
+            ).eq("org_id", user["org_id"]).single().execute()
+            if creds.data:
+                logo_b64 = creds.data.get("logo_base64")
+                if logo_b64 and ";base64," in logo_b64:
+                    logo_bytes = base64.b64decode(logo_b64.split(";base64,")[1])
+                pc = creds.data.get("primary_color")
+                if pc and pc.startswith("#") and len(pc) == 7:
+                    primary_color = (int(pc[1:3], 16), int(pc[3:5], 16), int(pc[5:7], 16))
+        except Exception:
+            pass
+
         generator = DTEPdfGenerator(
             dte_json=dte.get("documento_json", {}),
             sello=dte.get("sello_recibido"),
             estado=dte.get("estado", "desconocido"),
+            logo_bytes=logo_bytes,
+            primary_color=primary_color,
         )
         pdf_bytes = generator.generate()
 
@@ -527,7 +598,31 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         record["org_id"] = user["org_id"]
         return service.db.table("dte_productos").insert(record).execute().data
 
-    # ── IMPORT MASIVO ──
+    @router.put("/productos/{producto_id}")
+    async def update_producto(
+        producto_id: str,
+        data: ProductoCatalogoRequest,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Actualizar producto."""
+        return service.db.table("dte_productos").update(
+            data.model_dump()
+        ).eq("id", producto_id).eq("org_id", user["org_id"]).execute().data
+
+    @router.delete("/productos/{producto_id}")
+    async def delete_producto(
+        producto_id: str,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Eliminar producto del catálogo."""
+        service.db.table("dte_productos").delete().eq(
+            "id", producto_id
+        ).eq("org_id", user["org_id"]).execute()
+        return {"success": True}
+
+        # ── IMPORT MASIVO ──
 
     @router.post("/productos/import")
     async def import_productos_csv(
