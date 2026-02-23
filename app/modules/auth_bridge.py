@@ -125,6 +125,9 @@ class AuthBridge:
                         mh_response=response_data,
                     )
 
+                # MH returns token with "Bearer " prefix - strip it
+                if token.startswith("Bearer "):
+                    token = token[7:]
                 token_info = TokenInfo(
                     token=token,
                     nit=nit,
