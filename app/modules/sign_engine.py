@@ -36,7 +36,7 @@ def _b64url_decode(s: str) -> bytes:
     return base64.urlsafe_b64decode(s)
 
 
-_JWS_HEADER = {"alg": "RS512", "typ": "JWS"}
+_JWS_HEADER = {"alg": "RS256", "typ": "JWT"}
 _JWS_HEADER_B64 = _b64url_encode(
     json.dumps(_JWS_HEADER, separators=(",", ":")).encode("utf-8")
 )
@@ -181,7 +181,7 @@ class SignEngine:
             signing_input = f"{_JWS_HEADER_B64}.{payload_b64}".encode("ascii")
 
             signature = session.private_key.sign(
-                signing_input, padding.PKCS1v15(), hashes.SHA512(),
+                signing_input, padding.PKCS1v15(), hashes.SHA256(),
             )
 
             signature_b64 = _b64url_encode(signature)
@@ -208,7 +208,7 @@ class SignEngine:
         payload_str = json.dumps(dte_json, separators=(",", ":"), ensure_ascii=False)
         payload_b64 = _b64url_encode(payload_str.encode("utf-8"))
         signing_input = f"{_JWS_HEADER_B64}.{payload_b64}".encode("ascii")
-        signature = private_key.sign(signing_input, padding.PKCS1v15(), hashes.SHA512())
+        signature = private_key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
         signature_b64 = _b64url_encode(signature)
         return f"{_JWS_HEADER_B64}.{payload_b64}.{signature_b64}"
 
