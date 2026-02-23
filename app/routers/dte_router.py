@@ -8,6 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import date
+from fastapi.responses import StreamingResponse
+import io
+
+from app.services.import_service import import_productos, import_receptores
+from app.services.export_service import fetch_dtes_for_export, generate_xlsx, generate_pdf
 
 # ── Schemas ──
 
@@ -522,7 +527,88 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         record["org_id"] = user["org_id"]
         return service.db.table("dte_productos").insert(record).execute().data
 
-    # ── DASHBOARD ──
+    # ── IMPORT MASIVO ──
+
+    @router.post("/productos/import")
+    async def import_productos_csv(
+        file: UploadFile = File(...),
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Importar productos desde CSV o XLSX."""
+        if not file.filename:
+            raise HTTPException(400, "No se proporcionó archivo.")
+        ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+        if ext not in ("csv", "xlsx", "xls"):
+            raise HTTPException(400, "Formato no soportado. Use .csv o .xlsx")
+        content = await file.read()
+        if len(content) > 5 * 1024 * 1024:
+            raise HTTPException(400, "Archivo excede 5MB.")
+        result = await import_productos(content, file.filename, user["org_id"], service.db)
+        return result
+
+    @router.post("/receptores/import")
+    async def import_receptores_csv(
+        file: UploadFile = File(...),
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Importar receptores desde CSV o XLSX."""
+        if not file.filename:
+            raise HTTPException(400, "No se proporcionó archivo.")
+        ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+        if ext not in ("csv", "xlsx", "xls"):
+            raise HTTPException(400, "Formato no soportado. Use .csv o .xlsx")
+        content = await file.read()
+        if len(content) > 5 * 1024 * 1024:
+            raise HTTPException(400, "Archivo excede 5MB.")
+        result = await import_receptores(content, file.filename, user["org_id"], service.db)
+        return result
+
+    # ── EXPORT DTEs ──
+
+    @router.get("/dte/export")
+    async def export_dtes(
+        format: str = Query("xlsx", pattern="^(xlsx|pdf)$"),
+        date_from: Optional[str] = Query(None, alias="from", pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        date_to: Optional[str] = Query(None, alias="to", pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        tipo_dte: Optional[str] = Query(None),
+        estado: Optional[str] = Query(None),
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Exportar historial de DTEs como XLSX o PDF."""
+        rows = await fetch_dtes_for_export(
+            service.db, user["org_id"],
+            date_from=date_from, date_to=date_to,
+            tipo_dte=tipo_dte, estado=estado,
+        )
+        emisor_name = "FACTURA-SV"
+        try:
+            creds = service.db.table("mh_credentials").select(
+                "nombre"
+            ).eq("org_id", user["org_id"]).single().execute()
+            if creds.data and creds.data.get("nombre"):
+                emisor_name = creds.data["nombre"]
+        except Exception:
+            pass
+
+        if format == "xlsx":
+            file_bytes = generate_xlsx(rows, emisor_name)
+            filename = f"dtes_{date_from or 'all'}_{date_to or 'all'}.xlsx"
+            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        else:
+            file_bytes = generate_pdf(rows, emisor_name)
+            filename = f"dtes_{date_from or 'all'}_{date_to or 'all'}.pdf"
+            media_type = "application/pdf"
+
+        return StreamingResponse(
+            io.BytesIO(file_bytes),
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+        # ── DASHBOARD ──
 
     @router.get("/dashboard/stats")
     async def dashboard_stats(

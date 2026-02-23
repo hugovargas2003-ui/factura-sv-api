@@ -28,3 +28,4 @@ supabase==2.11.0
 fpdf2==2.8.6
 qrcode[pil]==8.2
 Pillow==12.1.1
+openpyxl==3.1.5
