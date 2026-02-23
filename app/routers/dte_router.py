@@ -14,6 +14,9 @@ import io
 
 from app.services.import_service import import_productos, import_receptores
 from app.services.export_service import fetch_dtes_for_export, generate_xlsx, generate_pdf
+from app.services import api_key_service
+from app.services import fiscal_reports
+from app.services import contingency_service
 
 # ── Schemas ──
 
@@ -701,6 +704,178 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             io.BytesIO(file_bytes),
             media_type=media_type,
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+        # ── API KEYS (S5-1) ──
+
+    @router.post("/keys")
+    async def create_api_key(
+        data: dict,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Generar nueva API key para la organización."""
+        role = user.get("role", "member")
+        if role not in ("admin", "owner"):
+            raise HTTPException(403, "Solo administradores pueden crear API keys")
+        result = await api_key_service.generate_api_key(
+            supabase=service.db,
+            org_id=user["org_id"],
+            created_by=user["user_id"],
+            name=data.get("name", "Default"),
+            permissions=data.get("permissions"),
+        )
+        return result
+
+    @router.get("/keys")
+    async def list_api_keys(
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Listar API keys de la organización."""
+        return await api_key_service.list_api_keys(service.db, user["org_id"])
+
+    @router.delete("/keys/{key_id}")
+    async def revoke_api_key(
+        key_id: str,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Revocar una API key."""
+        role = user.get("role", "member")
+        if role not in ("admin", "owner"):
+            raise HTTPException(403, "Solo administradores pueden revocar API keys")
+        await api_key_service.revoke_api_key(service.db, user["org_id"], key_id)
+        return {"success": True, "message": "API key revocada"}
+
+    @router.post("/keys/{key_id}/rotate")
+    async def rotate_api_key(
+        key_id: str,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Rotar API key: revoca la actual y genera una nueva."""
+        role = user.get("role", "member")
+        if role not in ("admin", "owner"):
+            raise HTTPException(403, "Solo administradores pueden rotar API keys")
+        result = await api_key_service.rotate_api_key(service.db, user["org_id"], key_id)
+        if not result:
+            raise HTTPException(404, "API key no encontrada")
+        return result
+
+    # ── FISCAL REPORTS (S5-3) ──
+
+    @router.get("/reports/libro-ventas-contribuyente")
+    async def libro_ventas_contribuyente(
+        year: int = Query(...),
+        month: int = Query(..., ge=1, le=12),
+        format: str = Query("xlsx"),
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Libro de Ventas Contribuyente (CCF tipo 03)."""
+        data, filename = await fiscal_reports.generate_libro_ventas_contribuyente(
+            service.db, user["org_id"], year, month, format
+        )
+        media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if format == "xlsx" else "application/pdf"
+        return StreamingResponse(
+            io.BytesIO(data),
+            media_type=media,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @router.get("/reports/libro-ventas-consumidor")
+    async def libro_ventas_consumidor(
+        year: int = Query(...),
+        month: int = Query(..., ge=1, le=12),
+        format: str = Query("xlsx"),
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Libro de Ventas Consumidor Final (Factura tipo 01)."""
+        data, filename = await fiscal_reports.generate_libro_ventas_consumidor(
+            service.db, user["org_id"], year, month, format
+        )
+        media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if format == "xlsx" else "application/pdf"
+        return StreamingResponse(
+            io.BytesIO(data),
+            media_type=media,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @router.get("/reports/resumen-iva")
+    async def resumen_iva(
+        year: int = Query(...),
+        month: int = Query(..., ge=1, le=12),
+        format: str = Query("xlsx"),
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Resumen IVA Mensual."""
+        data, filename = await fiscal_reports.generate_resumen_iva(
+            service.db, user["org_id"], year, month, format
+        )
+        media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if format == "xlsx" else "application/pdf"
+        return StreamingResponse(
+            io.BytesIO(data),
+            media_type=media,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    # ── CONTINGENCY QUEUE (S5-4) ──
+
+    @router.get("/contingency")
+    async def list_contingency(
+        status: str = Query(None),
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Listar DTEs en cola de contingencia."""
+        return await contingency_service.list_queue(
+            service.db, user["org_id"], status=status
+        )
+
+    @router.get("/contingency/stats")
+    async def contingency_stats(
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Estadísticas de la cola de contingencia."""
+        return await contingency_service.get_queue_stats(service.db, user["org_id"])
+
+    @router.post("/contingency/{queue_id}/retry")
+    async def retry_contingency(
+        queue_id: str,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Reintentar un DTE encolado."""
+        return await contingency_service.retry_queued_dte(
+            service.db, queue_id, user["org_id"]
+        )
+
+    @router.delete("/contingency/{queue_id}")
+    async def cancel_contingency(
+        queue_id: str,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Cancelar un DTE encolado."""
+        return await contingency_service.cancel_queued_dte(
+            service.db, queue_id, user["org_id"]
+        )
+
+    @router.post("/contingency/process")
+    async def process_contingency_batch(
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Procesar batch de DTEs encolados."""
+        role = user.get("role", "member")
+        if role not in ("admin", "owner"):
+            raise HTTPException(403, "Solo administradores pueden procesar la cola")
+        return await contingency_service.process_queue_batch(
+            service.db, user["org_id"], service, user
         )
 
         # ── DASHBOARD ──
