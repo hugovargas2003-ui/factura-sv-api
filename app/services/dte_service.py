@@ -225,6 +225,35 @@ class DTEService:
 
         logger.info(f"DTE {tipo_dte} emitido: {estado} | {codigo_gen[:8]}...")
 
+        # 10. Enviar PDF + JSON al receptor por email (solo si PROCESADO)
+        if estado == "procesado" and receptor.get("correo"):
+            try:
+                from app.services.pdf_generator import DTEPdfGenerator
+                from app.services.email_service import send_dte_email
+
+                pdf_gen = DTEPdfGenerator(
+                    dte_json=dte_dict,
+                    sello=mh_result.sello_recepcion,
+                    estado=estado,
+                )
+                pdf_bytes = pdf_gen.generate()
+
+                await send_dte_email(
+                    receptor_email=receptor.get("correo"),
+                    receptor_nombre=receptor.get("nombre", "Cliente"),
+                    emisor_nombre=emisor_data.get("nombre", ""),
+                    tipo_dte=tipo_dte,
+                    numero_control=numero_control,
+                    codigo_generacion=codigo_gen,
+                    sello_recepcion=mh_result.sello_recepcion or "",
+                    monto_total=monto_total,
+                    fecha_emision=dte_dict["identificacion"]["fecEmi"],
+                    pdf_bytes=pdf_bytes,
+                    dte_json=dte_dict,
+                )
+            except Exception as email_err:
+                logger.error(f"Email no enviado: {email_err}")
+
         result = {
             "success": mh_result.status == "PROCESADO",
             "dte_id": insert_result.data[0]["id"] if insert_result.data else None,
