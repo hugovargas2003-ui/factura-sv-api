@@ -644,6 +644,9 @@ app.include_router(_dte_router)
 from app.routers.billing_router import router as billing_router
 app.include_router(billing_router)
 
+from app.routers.admin_router import router as admin_router
+app.include_router(admin_router, prefix="/api/v1")
+
 
 # ENTRYPOINT
 # ─────────────────────────────────────────────────────────────
