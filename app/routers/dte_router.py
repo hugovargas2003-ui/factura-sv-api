@@ -1003,6 +1003,23 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         ok_count = sum(1 for r in results if r.get("estado_extraccion") == "ok")
         return {"total_archivos": len(results), "exitosos": ok_count, "errores": len(results) - ok_count, "datos": results}
 
+    @router.get("/import/test-extraction", tags=["Import/Export"])
+    async def test_extraction():
+        """Test endpoint sin auth para verificar motor."""
+        try:
+            engine = ExtractionEngine()
+            import json, tempfile, os
+            test_data = {"identificacion": {"tipoDte": "01", "fecEmi": "2026-02-20"}, "emisor": {"nit": "0614", "nombre": "TEST"}, "receptor": {"nombre": "REC"}, "resumen": {"totalPagar": 100}}
+            tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w")
+            json.dump(test_data, tmp)
+            tmp.close()
+            result = engine.extract_from_file(tmp.name)
+            os.unlink(tmp.name)
+            return {"status": "ok", "result": result}
+        except Exception as e:
+            import traceback
+            return {"status": "error", "error": str(e), "traceback": traceback.format_exc()}
+
 
     return router
 
