@@ -7,7 +7,7 @@ configuración, catálogos, y dashboard.
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 from datetime import date
 import base64
 from fastapi.responses import StreamingResponse
@@ -923,7 +923,7 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
                  tags=["Import/Export"])
     async def import_facturas_fisicas(
         request: Request,
-        files: list = File(..., description="Archivos PDF, JSON o XML de facturas"),
+        files: List[UploadFile] = File(..., description="Archivos PDF, JSON o XML de facturas"),
     ):
         """Sube 1+ facturas (PDF/JSON/XML). Devuelve CSV unificado."""
         user, org_id, _role = await _authenticate(request)
@@ -972,7 +972,7 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
                  tags=["Import/Export"])
     async def preview_facturas_fisicas(
         request: Request,
-        files: list = File(..., description="Archivos PDF, JSON o XML"),
+        files: List[UploadFile] = File(..., description="Archivos PDF, JSON o XML"),
     ):
         """Igual que /import/facturas-fisicas pero devuelve JSON."""
         user, org_id, _role = await _authenticate(request)
