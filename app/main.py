@@ -156,6 +156,7 @@ app = FastAPI(
 _cors_origins = ["*"] if settings.debug else [
     "https://factura-sv.algoritmos.io",
     "https://algoritmos.io",
+    "https://factura-sv-production-70de.up.railway.app",
 ]
 
 app.add_middleware(
