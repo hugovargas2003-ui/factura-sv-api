@@ -930,26 +930,16 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         if not org_id:
             raise HTTPException(status_code=403, detail="Sin organización")
 
-        engine = ExtractionEngine(
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
-            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
-        )
+        engine = ExtractionEngine()
         results = []
-        temp_dir = tempfile.mkdtemp()
-        try:
-            for f in files:
-                ext = os.path.splitext(f.filename)[1].lower()
-                if ext not in (".pdf", ".json", ".xml"):
-                    results.append({"archivo_origen": f.filename, "estado_extraccion": "error", "notas": f"Formato {ext} no soportado"})
-                    continue
-                temp_path = os.path.join(temp_dir, f.filename)
-                content = await f.read()
-                with open(temp_path, "wb") as tmp:
-                    tmp.write(content)
-                data = engine.extract_from_file(temp_path)
-                results.append(data)
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        for f in files:
+            ext = os.path.splitext(f.filename)[1].lower() if "." in f.filename else ""
+            if ext not in (".pdf", ".json", ".xml"):
+                results.append({"archivo_origen": f.filename, "estado_extraccion": "error", "notas": f"Formato {ext} no soportado"})
+                continue
+            content = await f.read()
+            data = engine.extract_from_bytes(content, f.filename)
+            results.append(data)
 
         if not results:
             raise HTTPException(status_code=400, detail="No se procesaron archivos")
@@ -979,26 +969,16 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         if not org_id:
             raise HTTPException(status_code=403, detail="Sin organización")
 
-        engine = ExtractionEngine(
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
-            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
-        )
+        engine = ExtractionEngine()
         results = []
-        temp_dir = tempfile.mkdtemp()
-        try:
-            for f in files:
-                ext = os.path.splitext(f.filename)[1].lower()
-                if ext not in (".pdf", ".json", ".xml"):
-                    results.append({"archivo_origen": f.filename, "estado_extraccion": "error", "notas": f"Formato {ext} no soportado"})
-                    continue
-                temp_path = os.path.join(temp_dir, f.filename)
-                content = await f.read()
-                with open(temp_path, "wb") as tmp:
-                    tmp.write(content)
-                data = engine.extract_from_file(temp_path)
-                results.append(data)
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        for f in files:
+            ext = os.path.splitext(f.filename)[1].lower() if "." in f.filename else ""
+            if ext not in (".pdf", ".json", ".xml"):
+                results.append({"archivo_origen": f.filename, "estado_extraccion": "error", "notas": f"Formato {ext} no soportado"})
+                continue
+            content = await f.read()
+            data = engine.extract_from_bytes(content, f.filename)
+            results.append(data)
 
         ok_count = sum(1 for r in results if r.get("estado_extraccion") == "ok")
         return {"total_archivos": len(results), "exitosos": ok_count, "errores": len(results) - ok_count, "datos": results}
