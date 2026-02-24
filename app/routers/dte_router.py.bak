@@ -4,8 +4,7 @@ FACTURA-SV: Router de Emisión DTE
 Endpoints REST para emisión, preview, invalidación,
 configuración, catálogos, y dashboard.
 """
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import date
@@ -913,95 +912,133 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             }
         }
 
-
-    # ── Sprint 8: Migración Digital ────────────────────────────
-    from app.services.extraction_engine import ExtractionEngine
-    import tempfile, shutil
-
-    @router.post("/import/facturas-fisicas",
-                 summary="Extrae datos de facturas PDF/JSON/XML → CSV",
-                 tags=["Import/Export"])
-    async def import_facturas_fisicas(
-        request: Request,
-        files: list = File(..., description="Archivos PDF, JSON o XML de facturas"),
-    ):
-        """Sube 1+ facturas (PDF/JSON/XML). Devuelve CSV unificado."""
-        user, org_id, _role = await _authenticate(request)
-        if not org_id:
-            raise HTTPException(status_code=403, detail="Sin organización")
-
-        engine = ExtractionEngine(
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
-            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
-        )
-        results = []
-        temp_dir = tempfile.mkdtemp()
-        try:
-            for f in files:
-                ext = os.path.splitext(f.filename)[1].lower()
-                if ext not in (".pdf", ".json", ".xml"):
-                    results.append({"archivo_origen": f.filename, "estado_extraccion": "error", "notas": f"Formato {ext} no soportado"})
-                    continue
-                temp_path = os.path.join(temp_dir, f.filename)
-                content = await f.read()
-                with open(temp_path, "wb") as tmp:
-                    tmp.write(content)
-                data = engine.extract_from_file(temp_path)
-                results.append(data)
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-        if not results:
-            raise HTTPException(status_code=400, detail="No se procesaron archivos")
-
-        csv_bytes = engine.results_to_csv(results)
-        ok_count = sum(1 for r in results if r.get("estado_extraccion") == "ok")
-        return Response(
-            content=csv_bytes,
-            media_type="text/csv",
-            headers={
-                "Content-Disposition": "attachment; filename=facturas_extraidas.csv",
-                "X-Total-Processed": str(len(results)),
-                "X-Successful": str(ok_count),
-                "X-Errors": str(len(results) - ok_count),
-            },
-        )
-
-    @router.post("/import/facturas-fisicas/preview",
-                 summary="Preview extracción (devuelve JSON)",
-                 tags=["Import/Export"])
-    async def preview_facturas_fisicas(
-        request: Request,
-        files: list = File(..., description="Archivos PDF, JSON o XML"),
-    ):
-        """Igual que /import/facturas-fisicas pero devuelve JSON."""
-        user, org_id, _role = await _authenticate(request)
-        if not org_id:
-            raise HTTPException(status_code=403, detail="Sin organización")
-
-        engine = ExtractionEngine(
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
-            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
-        )
-        results = []
-        temp_dir = tempfile.mkdtemp()
-        try:
-            for f in files:
-                ext = os.path.splitext(f.filename)[1].lower()
-                if ext not in (".pdf", ".json", ".xml"):
-                    results.append({"archivo_origen": f.filename, "estado_extraccion": "error", "notas": f"Formato {ext} no soportado"})
-                    continue
-                temp_path = os.path.join(temp_dir, f.filename)
-                content = await f.read()
-                with open(temp_path, "wb") as tmp:
-                    tmp.write(content)
-                data = engine.extract_from_file(temp_path)
-                results.append(data)
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-        ok_count = sum(1 for r in results if r.get("estado_extraccion") == "ok")
-        return {"total_archivos": len(results), "exitosos": ok_count, "errores": len(results) - ok_count, "datos": results}
-
-
     return router
+
+
+# ── Sprint 8: Migración Digital ────────────────────────────
+from app.services.extraction_engine import ExtractionEngine, ExtractionError
+import tempfile, shutil
+
+@router.post("/import/facturas-fisicas",
+             summary="Extrae datos de facturas PDF/JSON/XML → CSV",
+             tags=["Import/Export"])
+async def import_facturas_fisicas(
+    request: Request,
+    files: list = File(..., description="Archivos PDF, JSON o XML de facturas"),
+):
+    """
+    Recibe 1+ archivos de facturas (PDF, JSON, XML).
+    Extrae los datos con pdfplumber + regex + OCR + AI fallback.
+    Devuelve un CSV con los campos unificados.
+    """
+    # Auth
+    user, org_id, _role = await _authenticate(request)
+    if not org_id:
+        raise HTTPException(status_code=403, detail="Sin organización")
+
+    # Inicializar motor
+    engine = ExtractionEngine(
+        openai_api_key=os.getenv("OPENAI_API_KEY"),
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
+        use_ai_fallback=True,
+    )
+
+    results = []
+    temp_dir = tempfile.mkdtemp()
+
+    try:
+        for f in files:
+            # Guardar temporalmente
+            ext = os.path.splitext(f.filename)[1].lower()
+            if ext not in (".pdf", ".json", ".xml"):
+                results.append({
+                    "archivo_origen": f.filename,
+                    "estado_extraccion": "error",
+                    "notas": f"Formato {ext} no soportado. Use PDF, JSON o XML.",
+                })
+                continue
+
+            temp_path = os.path.join(temp_dir, f.filename)
+            content = await f.read()
+            with open(temp_path, "wb") as tmp:
+                tmp.write(content)
+
+            # Extraer
+            data = engine.extract_from_file(temp_path)
+            results.append(data)
+
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    if not results:
+        raise HTTPException(status_code=400, detail="No se procesaron archivos")
+
+    # Generar CSV
+    csv_bytes = engine.results_to_csv(results)
+
+    # Estadísticas
+    ok_count = sum(1 for r in results if r.get("estado_extraccion") == "ok")
+    err_count = len(results) - ok_count
+
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": "attachment; filename=facturas_extraidas.csv",
+            "X-Total-Processed": str(len(results)),
+            "X-Successful": str(ok_count),
+            "X-Errors": str(err_count),
+        },
+    )
+
+
+@router.post("/import/facturas-fisicas/preview",
+             summary="Preview extracción sin generar CSV",
+             tags=["Import/Export"])
+async def preview_facturas_fisicas(
+    request: Request,
+    files: list = File(..., description="Archivos PDF, JSON o XML"),
+):
+    """Igual que /import/facturas-fisicas pero devuelve JSON preview."""
+    user, org_id, _role = await _authenticate(request)
+    if not org_id:
+        raise HTTPException(status_code=403, detail="Sin organización")
+
+    engine = ExtractionEngine(
+        openai_api_key=os.getenv("OPENAI_API_KEY"),
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
+        use_ai_fallback=True,
+    )
+
+    results = []
+    temp_dir = tempfile.mkdtemp()
+
+    try:
+        for f in files:
+            ext = os.path.splitext(f.filename)[1].lower()
+            if ext not in (".pdf", ".json", ".xml"):
+                results.append({
+                    "archivo_origen": f.filename,
+                    "estado_extraccion": "error",
+                    "notas": f"Formato {ext} no soportado",
+                })
+                continue
+
+            temp_path = os.path.join(temp_dir, f.filename)
+            content = await f.read()
+            with open(temp_path, "wb") as tmp:
+                tmp.write(content)
+
+            data = engine.extract_from_file(temp_path)
+            results.append(data)
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    ok_count = sum(1 for r in results if r.get("estado_extraccion") == "ok")
+
+    return {
+        "total_archivos": len(results),
+        "exitosos": ok_count,
+        "errores": len(results) - ok_count,
+        "datos": results,
+    }
