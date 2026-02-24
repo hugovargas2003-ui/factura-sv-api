@@ -916,7 +916,7 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
 
     # ── Sprint 8: Migración Digital ────────────────────────────
     from app.services.extraction_engine import ExtractionEngine
-    import tempfile, shutil
+    import tempfile, shutil, os
 
     @router.post("/import/facturas-fisicas",
                  summary="Extrae datos de facturas PDF/JSON/XML → CSV",
