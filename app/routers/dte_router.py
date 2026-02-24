@@ -1003,6 +1003,25 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         ok_count = sum(1 for r in results if r.get("estado_extraccion") == "ok")
         return {"total_archivos": len(results), "exitosos": ok_count, "errores": len(results) - ok_count, "datos": results}
 
+    @router.post("/import/test-upload", tags=["Import/Export"])
+    async def test_upload(
+        files: List[UploadFile] = File(...),
+        user=Depends(get_current_user),
+    ):
+        """Debug file upload."""
+        try:
+            results = []
+            for f in files:
+                content = await f.read()
+                engine = ExtractionEngine()
+                data = engine.extract_from_bytes(content, f.filename)
+                results.append(data)
+            ok_count = sum(1 for r in results if r.get("estado_extraccion") == "ok")
+            return {"total": len(results), "ok": ok_count, "datos": results}
+        except Exception as e:
+            import traceback
+            return {"error": str(e), "tb": traceback.format_exc()}
+
     @router.get("/import/test-auth", tags=["Import/Export"])
     async def test_auth(user=Depends(get_current_user)):
         """Test auth."""
