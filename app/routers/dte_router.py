@@ -922,11 +922,11 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
                  summary="Extrae datos de facturas PDF/JSON/XML → CSV",
                  tags=["Import/Export"])
     async def import_facturas_fisicas(
-        request: Request,
         files: List[UploadFile] = File(..., description="Archivos PDF, JSON o XML de facturas"),
+        user=Depends(get_current_user),
     ):
         """Sube 1+ facturas (PDF/JSON/XML). Devuelve CSV unificado."""
-        user, org_id, _role = await _authenticate(request)
+        org_id = user.get("org_id")
         if not org_id:
             raise HTTPException(status_code=403, detail="Sin organización")
 
@@ -971,11 +971,11 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
                  summary="Preview extracción (devuelve JSON)",
                  tags=["Import/Export"])
     async def preview_facturas_fisicas(
-        request: Request,
         files: List[UploadFile] = File(..., description="Archivos PDF, JSON o XML"),
+        user=Depends(get_current_user),
     ):
         """Igual que /import/facturas-fisicas pero devuelve JSON."""
-        user, org_id, _role = await _authenticate(request)
+        org_id = user.get("org_id")
         if not org_id:
             raise HTTPException(status_code=403, detail="Sin organización")
 
