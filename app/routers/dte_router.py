@@ -26,6 +26,7 @@ from app.services import cxp_service
 from app.services import webhook_service
 from app.services import audit_service
 from app.services import notification_service
+from app.services import contabilidad_service
 from app.services import batch_service
 from app.services import inventory_service
 from app.services import contingency_service
@@ -1799,6 +1800,67 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         return await notification_service.mark_all_read(
             service.db, user["org_id"], user["user_id"],
         )
+
+
+    # ── Contabilidad ─────────────────────────────────────────────
+
+    @router.get("/contabilidad/cuentas")
+    async def list_cuentas(
+        tipo: str = None, solo_detalle: bool = False,
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Listar catalogo de cuentas."""
+        return await contabilidad_service.list_accounts(service.db, user["org_id"], tipo, solo_detalle)
+
+    @router.post("/contabilidad/cuentas")
+    async def create_cuenta(
+        body: dict,
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Crear cuenta contable."""
+        try:
+            return await contabilidad_service.create_account(service.db, user["org_id"], body)
+        except ValueError as e:
+            raise HTTPException(400, detail=str(e))
+
+    @router.post("/contabilidad/cuentas/seed")
+    async def seed_cuentas(
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Cargar catalogo de cuentas predeterminado (NIIF PYMES)."""
+        return await contabilidad_service.seed_default_accounts(service.db, user["org_id"])
+
+    @router.get("/contabilidad/partidas")
+    async def list_partidas(
+        fecha_from: str = None, fecha_to: str = None, tipo: str = None,
+        page: int = 1, per_page: int = 30,
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Listar partidas contables."""
+        return await contabilidad_service.list_journal_entries(
+            service.db, user["org_id"], fecha_from, fecha_to, tipo, page, per_page,
+        )
+
+    @router.post("/contabilidad/partidas")
+    async def create_partida(
+        body: dict,
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Crear partida contable manual."""
+        try:
+            return await contabilidad_service.create_manual_entry(
+                service.db, user["org_id"], user["user_id"], body,
+            )
+        except ValueError as e:
+            raise HTTPException(400, detail=str(e))
+
+    @router.get("/contabilidad/balance")
+    async def balance_general(
+        fecha_corte: str = None,
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Balance de comprobacion."""
+        return await contabilidad_service.get_balance_general(service.db, user["org_id"], fecha_corte)
 
     return router
 

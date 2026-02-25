@@ -11,6 +11,7 @@ import logging
 from app.services import webhook_service
 from app.services import audit_service
 from app.services import notification_service
+from app.services import contabilidad_service
 from datetime import datetime, timezone
 
 from supabase import Client as SupabaseClient
@@ -387,6 +388,23 @@ class DTEService:
                 )
         except Exception as e:
             logger.error(f"Notification error: {e}")
+
+
+        # ── Auto journal entry (non-blocking) ──
+        try:
+            if estado == "procesado" and tipo_dte in ("01", "03", "11", "14"):
+                _total_gravada = float(resumen.get("totalGravada", 0)) if isinstance(resumen, dict) else 0
+                _total_exenta = float(resumen.get("totalExenta", 0)) if isinstance(resumen, dict) else 0
+                _total_no_suj = float(resumen.get("totalNoSuj", 0)) if isinstance(resumen, dict) else 0
+                _iva = float(resumen.get("totalIva", 0)) if isinstance(resumen, dict) else 0
+                _condicion = int(resumen.get("condicionOperacion", 1)) if isinstance(resumen, dict) else 1
+                await contabilidad_service.generate_dte_entry(
+                    self.db, org_id, user_id, tipo_dte, numero_control, codigo_gen,
+                    receptor.get("nombre", ""), monto_total,
+                    _total_gravada, _total_exenta, _total_no_suj, _iva, _condicion,
+                )
+        except Exception as e:
+            logger.error(f"Auto journal entry error: {e}")
 
         result = {
             "success": mh_result.status == "PROCESADO",
