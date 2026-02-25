@@ -31,3 +31,4 @@ Pillow==12.1.1
 openpyxl==3.1.5
 pandas
 pdfplumber
+httpx>=0.25.0
