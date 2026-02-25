@@ -25,6 +25,7 @@ from app.services import cxc_service
 from app.services import cxp_service
 from app.services import webhook_service
 from app.services import audit_service
+from app.services import notification_service
 from app.services import batch_service
 from app.services import inventory_service
 from app.services import contingency_service
@@ -1759,6 +1760,45 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
     ):
         """Resumen de auditoria."""
         return await audit_service.get_audit_summary(service.db, user["org_id"])
+
+
+    # ── Notificaciones ───────────────────────────────────────────
+
+    @router.get("/notifications")
+    async def list_notifications(
+        unread_only: bool = False, page: int = 1, per_page: int = 20,
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Listar notificaciones."""
+        return await notification_service.list_notifications(
+            service.db, user["org_id"], user["user_id"], unread_only, page, per_page,
+        )
+
+    @router.get("/notifications/unread-count")
+    async def unread_count(
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Cantidad de notificaciones no leidas."""
+        return await notification_service.get_unread_count(
+            service.db, user["org_id"], user["user_id"],
+        )
+
+    @router.patch("/notifications/{notification_id}/read")
+    async def mark_notification_read(
+        notification_id: str,
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Marcar notificacion como leida."""
+        return await notification_service.mark_read(service.db, user["org_id"], notification_id)
+
+    @router.patch("/notifications/read-all")
+    async def mark_all_notifications_read(
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Marcar todas las notificaciones como leidas."""
+        return await notification_service.mark_all_read(
+            service.db, user["org_id"], user["user_id"],
+        )
 
     return router
 

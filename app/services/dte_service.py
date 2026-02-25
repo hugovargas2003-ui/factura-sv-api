@@ -10,6 +10,7 @@ REUTILIZA los módulos existentes:
 import logging
 from app.services import webhook_service
 from app.services import audit_service
+from app.services import notification_service
 from datetime import datetime, timezone
 
 from supabase import Client as SupabaseClient
@@ -375,6 +376,17 @@ class DTEService:
             )
         except Exception as e:
             logger.error(f"Audit log error: {e}")
+
+
+        # ── Notifications (non-blocking) ──
+        try:
+            if estado == "rechazado":
+                await notification_service.notify_dte_rejected(
+                    self.db, org_id, tipo_dte, codigo_gen,
+                    str(mh_result.observaciones) if hasattr(mh_result, 'observaciones') else "",
+                )
+        except Exception as e:
+            logger.error(f"Notification error: {e}")
 
         result = {
             "success": mh_result.status == "PROCESADO",
