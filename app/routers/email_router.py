@@ -207,17 +207,36 @@ class DTEEmailService:
                 f"Enviando DTE email: {DTE_TYPES.get(tipo_dte, tipo_dte)} "
                 f"({codigo_generacion}) → {receptor_email}"
             )
-            
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     self.webhook_url,
                     content=json.dumps(payload),
                     headers={"Content-Type": "text/plain"},
-                    follow_redirects=True,
+                    follow_redirects=False,
                 )
-            
+                # Google Apps Script devuelve 302 → seguir manualmente como POST
+                if response.status_code in (301, 302, 303, 307, 308):
+                    redirect_url = response.headers.get("location", "")
+                    if redirect_url:
+                        response = await client.post(
+                            redirect_url,
+                            content=json.dumps(payload),
+                            headers={"Content-Type": "text/plain"},
+                        )
+
             # Parsear respuesta
             if response.status_code == 200:
+
+
+
+
+
+
+
+
+
+
+
                 result = response.json()
                 if result.get("success"):
                     logger.info(
