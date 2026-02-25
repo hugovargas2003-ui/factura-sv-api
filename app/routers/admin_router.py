@@ -4,7 +4,7 @@ FACTURA-SV: Admin Panel Router
 Endpoints para gestión completa de la plataforma.
 Solo accesible por usuarios con role "admin".
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import Request,  APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
@@ -310,3 +310,56 @@ async def list_all_invoices(
 
     result = query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
     return {"data": result.data, "total": result.count or 0, "limit": limit, "offset": offset}
+
+
+# ══════════════════════════════════════════════════════════
+# WHATSAPP GLOBAL CONFIG (centralizado — envía desde cuenta FACTURA-SV)
+# ══════════════════════════════════════════════════════════
+
+@router.get("/whatsapp-config")
+async def get_whatsapp_config(
+    admin: dict = Depends(require_admin),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Get global WhatsApp config (admin only)."""
+    result = supabase.table("platform_config").select("key, value").in_(
+        "key", ["whatsapp_enabled", "whatsapp_phone_number_id", "whatsapp_waba_id"]
+    ).execute()
+    config = {r["key"]: r["value"] for r in (result.data or [])}
+    return {
+        "enabled": config.get("whatsapp_enabled", "false") == "true",
+        "phone_number_id": config.get("whatsapp_phone_number_id", ""),
+        "waba_id": config.get("whatsapp_waba_id", ""),
+        "has_token": bool(config.get("whatsapp_phone_number_id")),
+    }
+
+
+@router.post("/whatsapp-config")
+async def save_whatsapp_config(
+    request: Request,
+    admin: dict = Depends(require_admin),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Save global WhatsApp config (admin only). Token encrypted."""
+    from app.services.encryption_service import EncryptionService
+    data = await request.json()
+
+    updates = {
+        "whatsapp_enabled": str(data.get("enabled", False)).lower(),
+        "whatsapp_phone_number_id": data.get("phone_number_id", ""),
+        "whatsapp_waba_id": data.get("waba_id", ""),
+    }
+
+    # Encrypt access token
+    if data.get("access_token"):
+        enc = EncryptionService()
+        encrypted = enc.encrypt_string(data["access_token"], "platform_global")
+        updates["whatsapp_access_token"] = encrypted
+
+    for key, value in updates.items():
+        supabase.table("platform_config").upsert(
+            {"key": key, "value": value, "updated_at": "now()"},
+            on_conflict="key"
+        ).execute()
+
+    return {"success": True, "message": "Configuración WhatsApp guardada"}

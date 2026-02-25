@@ -299,6 +299,48 @@ class DTEService:
             except Exception as email_err:
                 logger.error(f"Email no enviado: {email_err}")
 
+        # 12. Enviar PDF por WhatsApp automáticamente (config global desde /admin)
+        if estado == "procesado" and receptor.get("telefono"):
+            try:
+                from app.services.whatsapp_service import send_dte_pdf
+
+                wa_config = self.db.table("platform_config").select(
+                    "key, value"
+                ).in_("key", [
+                    "whatsapp_enabled", "whatsapp_phone_number_id", "whatsapp_access_token"
+                ]).execute()
+                wa_map = {r["key"]: r["value"] for r in (wa_config.data or [])}
+
+                if wa_map.get("whatsapp_enabled") == "true" and wa_map.get("whatsapp_phone_number_id"):
+                    # Decrypt global token
+                    access_token = self.encryption.decrypt_string(
+                        wa_map["whatsapp_access_token"], "platform_global"
+                    )
+
+                    # Generate PDF if not already available
+                    try:
+                        wa_pdf = pdf_bytes  # Reuse from email block
+                    except NameError:
+                        from app.services.pdf_generator import DTEPdfGenerator
+                        wa_gen = DTEPdfGenerator(
+                            dte_json=dte_dict,
+                            sello=mh_result.sello_recepcion,
+                            estado=estado,
+                        )
+                        wa_pdf = wa_gen.generate()
+
+                    await send_dte_pdf(
+                        phone_number_id=wa_map["whatsapp_phone_number_id"],
+                        access_token=access_token,
+                        recipient_phone=receptor["telefono"],
+                        pdf_bytes=wa_pdf,
+                        filename=f"DTE_{numero_control}.pdf",
+                        caption=f"DTE {numero_control} - {receptor.get('nombre', '')}",
+                    )
+                    logger.info(f"WhatsApp PDF sent to {receptor['telefono']}")
+            except Exception as wa_err:
+                logger.error(f"WhatsApp auto-send failed (non-blocking): {wa_err}")
+
         result = {
             "success": mh_result.status == "PROCESADO",
             "dte_id": insert_result.data[0]["id"] if insert_result.data else None,
