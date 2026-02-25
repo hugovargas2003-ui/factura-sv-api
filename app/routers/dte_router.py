@@ -24,6 +24,7 @@ from app.services import batch_service
 from app.services import inventory_service
 from app.services import contingency_service
 from app.services import sucursal_service
+from app.services import dashboard_advanced
 
 # ── Schemas ──
 
@@ -1444,6 +1445,19 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         if "error" in result:
             raise HTTPException(400, result["error"])
         return result
+
+
+    # ══════════════════════════════════════════════════════════
+    # DASHBOARD AVANZADO (T2-03)
+    # ══════════════════════════════════════════════════════════
+
+    @router.get("/dashboard/advanced")
+    async def dashboard_advanced_stats(
+        dias: int = 30,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        return await dashboard_advanced.get_dashboard_advanced(service.db, user["org_id"], dias)
 
     return router
 
