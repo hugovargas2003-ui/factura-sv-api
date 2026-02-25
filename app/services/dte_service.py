@@ -18,6 +18,8 @@ from app.modules.sign_engine import sign_engine, CertificateSession
 from app.modules.transmit_service import transmit_service
 from app.modules.invalidation_service import invalidation_service
 from app.mh.dte_builder import DTEBuilder
+from app.services.inventory_service import deduct_stock_for_dte
+from app.services.sucursal_service import resolve_sucursal_codes
 
 
 def _sanitize_dte(d):
@@ -143,6 +145,7 @@ class DTEService:
         dte_referencia: dict | None = None,
         dcl_params: dict | None = None,
         cd_params: dict | None = None,
+        sucursal_id: str | None = None,
     ) -> dict:
         # 1. Validar credenciales y certificado
         creds = await self._get_credentials(org_id)
@@ -153,6 +156,14 @@ class DTEService:
 
         # 2. Validar cuota mensual
         await self._check_quota(org_id)
+
+        # 2b. Resolver códigos de sucursal (si aplica)
+        if sucursal_id:
+            resolved = await resolve_sucursal_codes(self.db, org_id, sucursal_id)
+            if resolved:
+                creds["codigo_establecimiento"] = resolved["codigo_establecimiento"]
+                creds["codigo_punto_venta"] = resolved["codigo_punto_venta"]
+                creds["tipo_establecimiento"] = resolved["tipo_establecimiento"]
 
         # 3. Obtener número de control atómico
         seq_result = self.db.rpc("get_next_numero_control", {
@@ -234,12 +245,32 @@ class DTEService:
             "documento_json": dte_dict,
             "documento_jws": signed_jwt,
             "created_by": user_id,
+            "sucursal_id": sucursal_id,
         }
         insert_result = self.db.table("dtes").insert(dte_record).execute()
 
         logger.info(f"DTE {tipo_dte} emitido: {estado} | {codigo_gen[:8]}...")
 
-        # 10. Enviar PDF + JSON al receptor por email (solo si PROCESADO)
+        # 10. Deducir inventario automaticamente (solo DTEs que mueven mercaderia)
+        if estado == "procesado" and tipo_dte in ("01", "03", "11", "14"):
+            try:
+                dte_items = [
+                    {"codigo": it.get("codigo"), "cantidad": it.get("cantidad", 1)}
+                    for it in items if it.get("codigo")
+                ]
+                if dte_items:
+                    await deduct_stock_for_dte(
+                        supabase=self.db,
+                        org_id=org_id,
+                        items=dte_items,
+                        numero_control=numero_control,
+                        user_id=user_id,
+                    )
+            except Exception as inv_err:
+                logger.error(f"Inventory deduction failed (non-blocking): {inv_err}")
+                # TODO: revert inventory on invalidation
+
+        # 11. Enviar PDF + JSON al receptor por email (solo si PROCESADO)
         if estado == "procesado" and receptor.get("correo"):
             try:
                 from app.services.pdf_generator import DTEPdfGenerator

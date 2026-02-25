@@ -104,6 +104,8 @@ class DTEEmitRequest(BaseModel):
     dcl_params: Optional[dict] = None
     # Para CD
     cd_params: Optional[dict] = None
+    # Sucursal (si multi-sucursal)
+    sucursal_id: Optional[str] = None
 
 
 class InvalidarRequest(BaseModel):
@@ -325,6 +327,7 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
                 dte_referencia=dte_ref,
                 dcl_params=data.dcl_params,
                 cd_params=data.cd_params,
+                sucursal_id=data.sucursal_id,
             )
             return result
 
