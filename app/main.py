@@ -22,7 +22,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Request
+from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -140,6 +140,29 @@ async def lifespan(app: FastAPI):
 # FASTAPI APP
 # ─────────────────────────────────────────────────────────────
 
+
+# --- Rate Limiting ---
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+
+def _get_rate_limit_key(request):
+    """Rate limit by org_id if authenticated, else by IP."""
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        try:
+            import jwt
+            token = auth_header.split(" ", 1)[1]
+            # Decode without verification just to get sub — actual auth happens in dependency
+            payload = jwt.decode(token, options={"verify_signature": False})
+            return payload.get("sub", get_remote_address(request))
+        except Exception:
+            pass
+    return get_remote_address(request)
+
+limiter = Limiter(key_func=_get_rate_limit_key, default_limits=["60/minute"])
+
 app = FastAPI(
     title="FACTURA-SV API",
     description=(
@@ -166,6 +189,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Rate limiter setup
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -655,7 +683,8 @@ from app.routers.dte_router import create_dte_router
 
 # --- Public DTE Verification (no auth required) ---
 @app.get("/api/v1/verificar/{codigo_generacion}", tags=["Verificación Pública"])
-async def verificar_dte(codigo_generacion: str):
+@limiter.limit("30/minute")
+async def verificar_dte(codigo_generacion: str, request: Request):
     """Public endpoint — verify DTE authenticity without login."""
     from app.dependencies import get_supabase
     db = get_supabase()
