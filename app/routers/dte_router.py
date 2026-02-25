@@ -21,7 +21,9 @@ from app.services import f07_generator
 from app.services import org_service
 from app.services import cxc_service
 from app.services import batch_service
+from app.services import inventory_service
 from app.services import contingency_service
+from app.services import sucursal_service
 
 # ── Schemas ──
 
@@ -827,6 +829,82 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
+    # ── INVENTARIO Y KARDEX (T1-03) ──
+
+    @router.get("/inventory")
+    async def stock_overview(
+        alerts_only: bool = Query(False),
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Vista general de inventario con alertas de stock minimo."""
+        return await inventory_service.get_stock_overview(
+            service.db, user["org_id"], alerts_only=alerts_only
+        )
+
+    @router.post("/inventory/{producto_id}/movement")
+    async def register_movement(
+        producto_id: str,
+        data: dict,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Registrar movimiento de inventario (entrada/salida/ajuste)."""
+        tipo = data.get("tipo")
+        cantidad = data.get("cantidad")
+        if not tipo or not cantidad:
+            raise HTTPException(400, "tipo y cantidad requeridos")
+        try:
+            return await inventory_service.register_movement(
+                service.db, user["org_id"], producto_id,
+                tipo=tipo, cantidad=float(cantidad),
+                costo_unitario=float(data.get("costo_unitario", 0)),
+                referencia=data.get("referencia", ""),
+                created_by=user["user_id"],
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @router.get("/inventory/{producto_id}/kardex")
+    async def get_kardex(
+        producto_id: str,
+        fecha_desde: Optional[str] = Query(None),
+        fecha_hasta: Optional[str] = Query(None),
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Kardex de un producto: historial de movimientos con saldo."""
+        try:
+            return await inventory_service.get_kardex(
+                service.db, user["org_id"], producto_id,
+                fecha_desde=fecha_desde, fecha_hasta=fecha_hasta,
+            )
+        except ValueError as e:
+            raise HTTPException(404, str(e))
+
+    @router.patch("/productos/{producto_id}/inventory")
+    async def toggle_inventory_tracking(
+        producto_id: str,
+        data: dict,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Activar/configurar tracking de inventario para un producto."""
+        update = {}
+        if "track_inventory" in data:
+            update["track_inventory"] = bool(data["track_inventory"])
+        if "stock_minimo" in data:
+            update["stock_minimo"] = float(data["stock_minimo"])
+        if "stock_actual" in data:
+            update["stock_actual"] = float(data["stock_actual"])
+        if not update:
+            raise HTTPException(400, "Nada que actualizar")
+        result = service.db.table("dte_productos").update(update).eq(
+            "id", producto_id).eq("org_id", user["org_id"]).execute()
+        if not result.data:
+            raise HTTPException(404, "Producto no encontrado")
+        return {"success": True, "updated": update}
+
     # ── EMISIÓN MASIVA BATCH (T1-02) ──
 
     @router.post("/dte/batch/preview")
@@ -1328,6 +1406,44 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             import traceback
             return {"status": "error", "error": str(e), "traceback": traceback.format_exc()}
 
+
+
+    # ══════════════════════════════════════════════════════════
+    # SUCURSALES (T2-01)
+    # ══════════════════════════════════════════════════════════
+
+    @router.get("/sucursales")
+    async def list_sucursales(user=Depends(get_current_user)):
+        return await sucursal_service.list_sucursales(db, user["org_id"])
+
+    @router.get("/sucursales/{sucursal_id}")
+    async def get_sucursal(sucursal_id: str, user=Depends(get_current_user)):
+        suc = await sucursal_service.get_sucursal(db, user["org_id"], sucursal_id)
+        if not suc:
+            raise HTTPException(404, "Sucursal no encontrada")
+        return suc
+
+    @router.post("/sucursales")
+    async def create_sucursal(request: Request, user=Depends(get_current_user)):
+        data = await request.json()
+        if not data.get("nombre"):
+            raise HTTPException(400, "nombre es requerido")
+        return await sucursal_service.create_sucursal(db, user["org_id"], data)
+
+    @router.put("/sucursales/{sucursal_id}")
+    async def update_sucursal(sucursal_id: str, request: Request, user=Depends(get_current_user)):
+        data = await request.json()
+        result = await sucursal_service.update_sucursal(db, user["org_id"], sucursal_id, data)
+        if not result:
+            raise HTTPException(404, "Sucursal no encontrada o sin cambios")
+        return result
+
+    @router.delete("/sucursales/{sucursal_id}")
+    async def delete_sucursal(sucursal_id: str, user=Depends(get_current_user)):
+        result = await sucursal_service.delete_sucursal(db, user["org_id"], sucursal_id)
+        if "error" in result:
+            raise HTTPException(400, result["error"])
+        return result
 
     return router
 
