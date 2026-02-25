@@ -653,6 +653,67 @@ async def generate_control_number(
 from app.dependencies import get_dte_service, get_current_user
 from app.routers.dte_router import create_dte_router
 
+# --- Public DTE Verification (no auth required) ---
+@app.get("/api/v1/verificar/{codigo_generacion}", tags=["Verificación Pública"])
+async def verificar_dte(codigo_generacion: str):
+    """Public endpoint — verify DTE authenticity without login."""
+    from app.dependencies import get_supabase
+    db = get_supabase()
+    result = db.table("dtes").select(
+        "tipo_dte, numero_control, codigo_generacion, fecha_emision, "
+        "hora_emision, receptor_nombre, receptor_nit, monto_total, "
+        "total_gravada, total_exenta, iva, estado, sello_recibido, created_at"
+    ).eq("codigo_generacion", codigo_generacion).execute()
+
+    if not result.data:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={
+            "encontrado": False,
+            "mensaje": "No se encontró ningún DTE con este código de generación."
+        })
+
+    dte = result.data[0]
+    # Get emisor name from dte_credentials via org relationship
+    org_result = db.table("dtes").select("org_id").eq(
+        "codigo_generacion", codigo_generacion
+    ).execute()
+    emisor_nombre = None
+    if org_result.data:
+        org_id = org_result.data[0]["org_id"]
+        cred_result = db.table("dte_credentials").select("nombre, nit").eq(
+            "org_id", org_id
+        ).execute()
+        if cred_result.data:
+            emisor_nombre = cred_result.data[0].get("nombre")
+
+    tipo_nombres = {
+        "01": "Factura", "03": "Comprobante de Crédito Fiscal",
+        "04": "Nota de Remisión", "05": "Nota de Crédito",
+        "06": "Nota de Débito", "07": "Comprobante de Retención",
+        "08": "Comprobante de Liquidación", "09": "Documento Contable de Liquidación",
+        "11": "Factura de Sujeto Excluido", "14": "Factura de Exportación",
+        "15": "Comprobante de Donación"
+    }
+
+    return {
+        "encontrado": True,
+        "dte": {
+            "tipo_dte": dte["tipo_dte"],
+            "tipo_nombre": tipo_nombres.get(dte["tipo_dte"], dte["tipo_dte"]),
+            "numero_control": dte["numero_control"],
+            "codigo_generacion": dte["codigo_generacion"],
+            "fecha_emision": dte["fecha_emision"],
+            "hora_emision": dte["hora_emision"],
+            "emisor_nombre": emisor_nombre,
+            "receptor_nombre": dte["receptor_nombre"],
+            "monto_total": dte["monto_total"],
+            "estado": dte["estado"],
+            "sello_mh": dte["sello_recibido"],
+            "verificado_mh": dte["sello_recibido"] is not None and dte["estado"] == "procesado"
+        }
+    }
+
+
 _dte_router = create_dte_router(
     get_dte_service=get_dte_service,
     get_current_user=get_current_user,
