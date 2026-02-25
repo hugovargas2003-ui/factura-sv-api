@@ -370,6 +370,63 @@ async def generate_anexo2(
     return _generar_csv(filas)
 
 
+async def generate_anexo3(
+    supabase: Any, org_id: str, periodo: str
+) -> bytes:
+    """
+    Genera Anexo 3 — Retenciones y Percepciones (tipo_dte=07).
+    Retorna bytes del CSV.
+    """
+    dtes = await _fetch_dtes_con_json(supabase, org_id, ["07"], periodo)
+    emisor_nit = await _fetch_emisor_nit(supabase, org_id)
+
+    filas = []
+    for i, dte in enumerate(dtes, 1):
+        doc = dte.get("documento_json") or {}
+        ident = doc.get("identificacion", {})
+        receptor = doc.get("receptor", {})
+        resumen = doc.get("resumen", {})
+
+        num_control = ident.get("numeroControl") or dte.get("numero_control", "")
+        cod_gen = ident.get("codigoGeneracion") or dte.get("codigo_generacion", "")
+        sello = dte.get("sello_recibido", "")
+        fecha = ident.get("fecEmi") or dte.get("fecha_emision", "")
+
+        rec_nit = _strip_guiones(
+            receptor.get("numDocumento") or dte.get("receptor_nit", "")
+        )
+        rec_nombre = _safe_str(receptor.get("nombre") or dte.get("receptor_nombre", ""))
+        rec_nrc = _safe_str(receptor.get("nrc") or dte.get("receptor_nrc", ""))
+
+        monto_sujeto = float(resumen.get("totalSujetoRetencion", 0) or 0)
+        iva_retenido = float(resumen.get("ivaRetenido", 0) or resumen.get("ivaRete1", 0) or 0)
+        total_pagar = float(
+            resumen.get("totalPagar", 0) or resumen.get("montoTotalOperacion", 0) or dte.get("monto_total", 0) or 0
+        )
+
+        # 15 columnas
+        fila = [
+            str(i),                         # A: Correlativo
+            _fmt_fecha(fecha),              # B: Fecha emisión
+            "D",                            # C: Clase documento (Digital)
+            "07",                           # D: Tipo documento
+            num_control,                    # E: Número de control
+            cod_gen,                        # F: Código generación
+            sello,                          # G: Sello de recepción
+            rec_nit,                        # H: NIT del sujeto de retención
+            rec_nrc,                        # I: NRC
+            rec_nombre,                     # J: Nombre del sujeto de retención
+            _fmt_monto(monto_sujeto),       # K: Monto sujeto a retención
+            _fmt_monto(iva_retenido),       # L: IVA retenido
+            _fmt_monto(total_pagar),        # M: Total a pagar
+            "1",                            # N: Tipo operación
+            "1",                            # O: Tipo ingreso Renta
+        ]
+        filas.append(fila)
+
+    return _generar_csv(filas)
+
+
 # ---------------------------------------------------------------------------
 # ZIP con ambos anexos
 # ---------------------------------------------------------------------------

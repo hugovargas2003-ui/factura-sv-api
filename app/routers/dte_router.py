@@ -20,6 +20,7 @@ from app.services import fiscal_reports
 from app.services import f07_generator
 from app.services import org_service
 from app.services import contador_service
+from app.services import whatsapp_service
 from app.services import cxc_service
 from app.services import batch_service
 from app.services import inventory_service
@@ -1189,6 +1190,18 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
+    @router.get("/reports/f07/anexo3")
+    async def f07_anexo3(
+        periodo: str = Query(..., description="YYYY-MM"),
+        user=Depends(get_current_user),
+    ):
+        """Genera Anexo 3 F-07 — Retenciones (tipo 07)."""
+        csv_bytes = await f07_generator.generate_anexo3(
+            db, user["org_id"], periodo
+        )
+        return Response(content=csv_bytes, media_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="F07_Anexo3_{periodo}.csv"'})
+
     @router.get("/reports/f07/descargar")
     async def f07_descargar_zip(
         periodo: str = Query(..., description="Formato YYYYMM, ej: 202502", min_length=6, max_length=6),
@@ -1476,6 +1489,86 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             "role": user.get("role", "member"),
             "permissions": get_role_permissions(user.get("role", "member")),
         }
+
+    # ══════════════════════════════════════════════════════════
+    # WHATSAPP CLOUD API
+    # ══════════════════════════════════════════════════════════
+
+    @router.post("/dte/{dte_id}/whatsapp")
+    async def send_dte_whatsapp(
+        dte_id: str,
+        request: Request,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Enviar PDF del DTE por WhatsApp Cloud API."""
+        org_id = user["org_id"]
+        # Get WhatsApp config
+        wa_config = await whatsapp_service.get_whatsapp_config(db, org_id)
+        if not wa_config.get("configured") or not wa_config.get("enabled"):
+            raise HTTPException(400, "WhatsApp no está configurado. Vaya a Configuración > WhatsApp.")
+
+        # Get DTE
+        dte_result = db.table("dtes").select("*").eq("id", dte_id).eq("org_id", org_id).single().execute()
+        if not dte_result.data:
+            raise HTTPException(404, "DTE no encontrado")
+        dte = dte_result.data
+
+        # Get phone from request body or receptor
+        body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        phone = body.get("phone") or dte.get("receptor_telefono") or ""
+        if not phone:
+            raise HTTPException(400, "No hay número de teléfono del receptor")
+
+        # Generate PDF
+        try:
+            from app.services.pdf_generator import DTEPdfGenerator
+            pdf_gen = DTEPdfGenerator(
+                dte_json=dte.get("documento_json", {}),
+                sello=dte.get("sello_recibido", ""),
+                estado=dte.get("estado", ""),
+            )
+            pdf_bytes = pdf_gen.generate()
+        except Exception as e:
+            raise HTTPException(500, f"Error generando PDF: {e}")
+
+        # Get decrypted access token
+        creds = db.table("dte_credentials").select(
+            "whatsapp_phone_number_id, whatsapp_access_token_encrypted"
+        ).eq("org_id", org_id).single().execute()
+
+        if not creds.data or not creds.data.get("whatsapp_access_token_encrypted"):
+            raise HTTPException(400, "Token de WhatsApp no configurado")
+
+        encryption = service.encryption
+        access_token = encryption.decrypt_string(creds.data["whatsapp_access_token_encrypted"], org_id)
+
+        result = await whatsapp_service.send_dte_pdf(
+            phone_number_id=creds.data["whatsapp_phone_number_id"],
+            access_token=access_token,
+            recipient_phone=phone,
+            pdf_bytes=pdf_bytes,
+            filename=f"DTE_{dte.get('numero_control', 'doc')}.pdf",
+            caption=f"DTE {dte.get('numero_control', '')} - {dte.get('receptor_nombre', '')}",
+        )
+        return result
+
+    @router.get("/config/whatsapp")
+    async def get_whatsapp_config(user=Depends(get_current_user)):
+        """Obtener configuración WhatsApp de la org."""
+        return await whatsapp_service.get_whatsapp_config(db, user["org_id"])
+
+    @router.post("/config/whatsapp")
+    async def save_whatsapp_config_endpoint(
+        request: Request,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Guardar configuración WhatsApp."""
+        data = await request.json()
+        return await whatsapp_service.save_whatsapp_config(
+            db, user["org_id"], service.encryption, data
+        )
 
     # ══════════════════════════════════════════════════════════
     # PANEL CONTADOR (cross-org dashboard)
