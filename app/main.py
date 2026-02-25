@@ -447,6 +447,19 @@ async def transmit_dte_handler(request: Request):
         codigo_generacion=codigo_generacion,
     )
 
+
+    # --- Notificación por email al receptor (no-bloqueante) ---
+    if result.status == "PROCESADO":
+        try:
+            from app.routers.email_router import notify_dte_by_email
+            email_result = await notify_dte_by_email(
+                dte_json=dte_json,
+                sello_recibido=result.sello_recepcion,
+            )
+            logger.info(f"Email DTE: {email_result.get('message', 'N/A')}")
+        except Exception as e:
+            logger.warning(f"Email DTE falló (no-bloqueante): {e}")
+
     return result
 
 

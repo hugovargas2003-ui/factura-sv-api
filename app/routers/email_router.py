@@ -212,13 +212,20 @@ class DTEEmailService:
                     self.webhook_url,
                     content=json.dumps(payload),
                     headers={"Content-Type": "text/plain"},
-                    follow_redirects=False,
+                    follow_redirects=True,
                 )
-                # Google Apps Script devuelve 302 → seguir manualmente como POST
-                if response.status_code in (301, 302, 303, 307, 308):
-                    redirect_url = response.headers.get("location", "")
-                    if redirect_url:
-                        response = await client.get(redirect_url)
+
+
+
+
+
+
+
+
+
+
+
+
 
             # Parsear respuesta
             if response.status_code == 200:
