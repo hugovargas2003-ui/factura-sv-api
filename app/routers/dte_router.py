@@ -18,6 +18,7 @@ from app.services.export_service import fetch_dtes_for_export, generate_xlsx, ge
 from app.services import api_key_service
 from app.services import fiscal_reports
 from app.services import f07_generator
+from app.services import org_service
 from app.services import contingency_service
 
 # ── Schemas ──
@@ -823,6 +824,98 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             media_type=media,
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+
+    # ── MULTI-ORGANIZACIÓN (T1-01) ──
+
+    @router.get("/orgs")
+    async def list_my_organizations(
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Listar organizaciones del usuario autenticado."""
+        return await org_service.list_user_organizations(
+            service.db, user["user_id"]
+        )
+
+    @router.post("/orgs/switch")
+    async def switch_organization(
+        data: dict,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Cambiar organización activa del usuario."""
+        org_id = data.get("org_id")
+        if not org_id:
+            raise HTTPException(400, "org_id requerido")
+        try:
+            return await org_service.switch_organization(
+                service.db, user["user_id"], org_id
+            )
+        except ValueError as e:
+            raise HTTPException(403, str(e))
+
+    @router.post("/orgs/members")
+    async def add_org_member(
+        data: dict,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Agregar usuario existente a la organización actual."""
+        role = user.get("role", "member")
+        if role not in ("admin", "owner"):
+            raise HTTPException(403, "Solo admin/owner pueden agregar miembros")
+        email = data.get("email")
+        member_role = data.get("role", "member")
+        if not email:
+            raise HTTPException(400, "email requerido")
+        if member_role not in ("member", "emisor", "auditor", "admin"):
+            raise HTTPException(400, "Rol invalido")
+        try:
+            return await org_service.add_user_to_organization(
+                service.db, user["org_id"], email, member_role
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @router.delete("/orgs/members/{target_user_id}")
+    async def remove_org_member(
+        target_user_id: str,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Remover usuario de la organización actual."""
+        role = user.get("role", "member")
+        if role not in ("admin", "owner"):
+            raise HTTPException(403, "Solo admin/owner pueden remover miembros")
+        try:
+            return await org_service.remove_user_from_organization(
+                service.db, user["org_id"], target_user_id
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @router.get("/orgs/members")
+    async def list_org_members(
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Listar miembros de la organización actual."""
+        result = service.db.table("user_organizations").select(
+            "user_id, role, created_at"
+        ).eq("org_id", user["org_id"]).execute()
+        members = []
+        for m in (result.data or []):
+            u = service.db.table("users").select(
+                "email, full_name"
+            ).eq("id", m["user_id"]).single().execute()
+            members.append({
+                "user_id": m["user_id"],
+                "email": u.data.get("email", "") if u.data else "",
+                "full_name": u.data.get("full_name", "") if u.data else "",
+                "role": m["role"],
+                "created_at": m["created_at"],
+            })
+        return members
 
     # ── F-07 ANEXOS DGII (CSV) ──
 
