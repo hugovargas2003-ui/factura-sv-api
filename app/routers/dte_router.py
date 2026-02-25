@@ -23,6 +23,7 @@ from app.services import contador_service
 from app.services import whatsapp_service
 from app.services import cxc_service
 from app.services import cxp_service
+from app.services import webhook_service
 from app.services import batch_service
 from app.services import inventory_service
 from app.services import contingency_service
@@ -1685,6 +1686,55 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
     ):
         """Estadísticas de cuentas por pagar."""
         return await cxp_service.get_cxp_stats(service.db, user["org_id"])
+
+
+    # ── Webhooks ─────────────────────────────────────────────────
+
+    @router.get("/webhooks")
+    async def list_webhooks(
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Listar webhooks configurados."""
+        return await webhook_service.list_webhooks(service.db, user["org_id"])
+
+    @router.post("/webhooks")
+    async def create_webhook(
+        body: dict,
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Crear nuevo webhook."""
+        try:
+            return await webhook_service.create_webhook(
+                service.db, user["org_id"],
+                url=body["url"], events=body.get("events", ["dte.emitted"]),
+                description=body.get("description", ""),
+            )
+        except ValueError as e:
+            raise HTTPException(400, detail=str(e))
+
+    @router.delete("/webhooks/{webhook_id}")
+    async def delete_webhook(
+        webhook_id: str,
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Eliminar webhook."""
+        try:
+            return await webhook_service.delete_webhook(service.db, user["org_id"], webhook_id)
+        except ValueError as e:
+            raise HTTPException(400, detail=str(e))
+
+    @router.patch("/webhooks/{webhook_id}/toggle")
+    async def toggle_webhook(
+        webhook_id: str, body: dict,
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Activar/desactivar webhook."""
+        try:
+            return await webhook_service.toggle_webhook(
+                service.db, user["org_id"], webhook_id, body.get("active", True)
+            )
+        except ValueError as e:
+            raise HTTPException(400, detail=str(e))
 
     return router
 

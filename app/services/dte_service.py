@@ -8,6 +8,7 @@ REUTILIZA los módulos existentes:
   - auth_bridge (autenticación MH)
 """
 import logging
+from app.services import webhook_service
 from datetime import datetime, timezone
 
 from supabase import Client as SupabaseClient
@@ -340,6 +341,27 @@ class DTEService:
                     logger.info(f"WhatsApp PDF sent to {receptor['telefono']}")
             except Exception as wa_err:
                 logger.error(f"WhatsApp auto-send failed (non-blocking): {wa_err}")
+
+
+        # ── Webhook notification (non-blocking) ──
+        try:
+            if estado == "procesado":
+                await webhook_service.fire_webhooks(self.db, org_id, "dte.emitted", {
+                    "tipo_dte": tipo_dte,
+                    "numero_control": numero_control,
+                    "codigo_generacion": codigo_gen,
+                    "receptor_nombre": receptor.get("nombre"),
+                    "monto_total": monto_total,
+                    "sello": mh_result.sello_recepcion,
+                })
+            elif estado == "rechazado":
+                await webhook_service.fire_webhooks(self.db, org_id, "dte.rejected", {
+                    "tipo_dte": tipo_dte,
+                    "codigo_generacion": codigo_gen,
+                    "error": str(mh_result.observaciones) if hasattr(mh_result, 'observaciones') else "",
+                })
+        except Exception as e:
+            logger.error(f"Webhook fire error: {e}")
 
         result = {
             "success": mh_result.status == "PROCESADO",
