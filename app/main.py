@@ -648,6 +648,10 @@ app.include_router(billing_router)
 from app.routers.admin_router import router as admin_router
 app.include_router(admin_router, prefix="/api/v1")
 
+# --- Email DTE Service ---
+from email_service import router as email_router
+app.include_router(email_router, prefix="/api/v1")
+
 
 # ENTRYPOINT
 # ─────────────────────────────────────────────────────────────
