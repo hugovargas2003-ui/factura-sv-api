@@ -18,7 +18,7 @@ Provides:
     POST /api/v1/billing/transfer-claim       — Client reports bank transfer
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, timedelta, date
@@ -159,7 +159,7 @@ async def _get_current_user_from_request(request):
 # ===================================================================
 
 @router.get("/api/v1/admin/subscriptions")
-async def list_subscriptions(request: "fastapi.Request"):
+async def list_subscriptions(request: Request):
     """List all organizations with subscription status."""
     from fastapi import Request
     user = await _get_current_user_from_request(request)
@@ -200,7 +200,7 @@ async def list_subscriptions(request: "fastapi.Request"):
 
 
 @router.post("/api/v1/admin/subscriptions/override")
-async def override_subscription(body: SubscriptionOverride, request: "fastapi.Request"):
+async def override_subscription(body: SubscriptionOverride, request: Request):
     """
     Admin manually sets a plan for an organization.
     Used for: cash payments, verified transfers, special deals.
@@ -278,7 +278,7 @@ async def override_subscription(body: SubscriptionOverride, request: "fastapi.Re
 
 
 @router.post("/api/v1/admin/subscriptions/extend")
-async def extend_subscription(body: SubscriptionExtend, request: "fastapi.Request"):
+async def extend_subscription(body: SubscriptionExtend, request: Request):
     """Extend an existing subscription by N months."""
     from fastapi import Request
     user = await _get_current_user_from_request(request)
@@ -342,7 +342,7 @@ async def extend_subscription(body: SubscriptionExtend, request: "fastapi.Reques
 
 
 @router.post("/api/v1/admin/subscriptions/suspend")
-async def suspend_org(body: SuspendRequest, request: "fastapi.Request"):
+async def suspend_org(body: SuspendRequest, request: Request):
     """Suspend or reactivate an organization."""
     from fastapi import Request
     user = await _get_current_user_from_request(request)
@@ -374,7 +374,7 @@ async def suspend_org(body: SuspendRequest, request: "fastapi.Request"):
 
 
 @router.get("/api/v1/admin/subscriptions/expiring")
-async def list_expiring(request: "fastapi.Request"):
+async def list_expiring(request: Request):
     """List subscriptions expiring in the next 30 days."""
     from fastapi import Request
     user = await _get_current_user_from_request(request)
@@ -401,7 +401,7 @@ async def list_expiring(request: "fastapi.Request"):
 
 
 @router.get("/api/v1/admin/payments")
-async def list_payments(request: "fastapi.Request"):
+async def list_payments(request: Request):
     """List all manual payments with filters."""
     from fastapi import Request
     user = await _get_current_user_from_request(request)
@@ -428,7 +428,7 @@ async def list_payments(request: "fastapi.Request"):
 
 
 @router.post("/api/v1/admin/payments/{payment_id}/verify")
-async def verify_payment(payment_id: str, body: PaymentAction, request: "fastapi.Request"):
+async def verify_payment(payment_id: str, body: PaymentAction, request: Request):
     """Admin verifies a bank transfer payment → activates plan."""
     from fastapi import Request
     user = await _get_current_user_from_request(request)
@@ -483,7 +483,7 @@ async def verify_payment(payment_id: str, body: PaymentAction, request: "fastapi
 
 
 @router.post("/api/v1/admin/payments/{payment_id}/reject")
-async def reject_payment(payment_id: str, body: PaymentAction, request: "fastapi.Request"):
+async def reject_payment(payment_id: str, body: PaymentAction, request: Request):
     """Admin rejects a transfer claim → downgrades org to free."""
     from fastapi import Request
     user = await _get_current_user_from_request(request)
@@ -532,7 +532,7 @@ async def reject_payment(payment_id: str, body: PaymentAction, request: "fastapi
 # ===================================================================
 
 @router.post("/api/v1/billing/transfer-claim")
-async def claim_transfer(body: TransferClaim, request: "fastapi.Request"):
+async def claim_transfer(body: TransferClaim, request: Request):
     """
     Client reports a bank transfer.
     Auto-activates the plan provisionally.
