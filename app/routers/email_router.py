@@ -211,8 +211,8 @@ class DTEEmailService:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     self.webhook_url,
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
+                    content=json.dumps(payload),
+                    headers={"Content-Type": "text/plain"},
                     follow_redirects=True,
                 )
             
