@@ -19,6 +19,7 @@ from app.services import api_key_service
 from app.services import fiscal_reports
 from app.services import f07_generator
 from app.services import org_service
+from app.services import contador_service
 from app.services import cxc_service
 from app.services import batch_service
 from app.services import inventory_service
@@ -1475,6 +1476,56 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             "role": user.get("role", "member"),
             "permissions": get_role_permissions(user.get("role", "member")),
         }
+
+    # ══════════════════════════════════════════════════════════
+    # PANEL CONTADOR (cross-org dashboard)
+    # ══════════════════════════════════════════════════════════
+
+    @router.get("/contador/dashboard")
+    async def contador_dashboard(user=Depends(get_current_user)):
+        """Dashboard consolidado: stats de TODAS las orgs del usuario."""
+        try:
+            result = await contador_service.get_contador_dashboard(
+                db, user["user_id"]
+            )
+            return result
+        except Exception as e:
+            raise HTTPException(500, detail=str(e))
+
+    @router.get("/contador/report")
+    async def contador_report(
+        fecha_desde: str = Query(..., description="YYYY-MM-DD"),
+        fecha_hasta: str = Query(..., description="YYYY-MM-DD"),
+        user=Depends(get_current_user),
+    ):
+        """Reporte consolidado cross-org por rango de fechas."""
+        try:
+            result = await contador_service.get_cross_org_report(
+                db, user["user_id"], fecha_desde, fecha_hasta
+            )
+            return result
+        except Exception as e:
+            raise HTTPException(500, detail=str(e))
+
+    @router.post("/contador/add-client")
+    async def contador_add_client(
+        request: Request,
+        user=Depends(get_current_user),
+    ):
+        """Crear nueva org cliente y vincular al contador como owner."""
+        data = await request.json()
+        if not data.get("nombre"):
+            raise HTTPException(400, "El nombre de la empresa es requerido")
+        try:
+            result = await contador_service.add_client_org(
+                db, user["user_id"], user["org_id"], data
+            )
+            return result
+        except ValueError as e:
+            code = 402 if "plan" in str(e).lower() else 400
+            raise HTTPException(code, detail=str(e))
+        except Exception as e:
+            raise HTTPException(500, detail=str(e))
 
     return router
 
