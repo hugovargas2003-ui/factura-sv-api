@@ -22,6 +22,7 @@ from app.services import org_service
 from app.services import contador_service
 from app.services import whatsapp_service
 from app.services import cxc_service
+from app.services import cxp_service
 from app.services import batch_service
 from app.services import inventory_service
 from app.services import contingency_service
@@ -1619,6 +1620,71 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             raise HTTPException(code, detail=str(e))
         except Exception as e:
             raise HTTPException(500, detail=str(e))
+
+
+    # ── Cuentas por Pagar (CxP) ──────────────────────────────────
+
+    @router.get("/cxp")
+    async def list_cxp(
+        estado_pago: str = None, proveedor: str = None,
+        vencido: bool = None, page: int = 1, per_page: int = 20,
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Listar cuentas por pagar con filtros."""
+        return await cxp_service.list_cxp(
+            service.db, user["org_id"], estado_pago, proveedor, vencido, page, per_page
+        )
+
+    @router.post("/cxp")
+    async def create_cxp(
+        body: dict,
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Crear nueva cuenta por pagar."""
+        try:
+            return await cxp_service.create_cxp(service.db, user["org_id"], user["user_id"], body)
+        except ValueError as e:
+            raise HTTPException(400, detail=str(e))
+
+    @router.post("/cxp/{cxp_id}/pago")
+    async def register_cxp_payment(
+        cxp_id: str, body: dict,
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Registrar pago en cuenta por pagar."""
+        try:
+            return await cxp_service.register_payment(
+                service.db, user["org_id"], cxp_id,
+                monto=body["monto"], metodo=body.get("metodo", "efectivo"),
+                referencia=body.get("referencia", ""), nota=body.get("nota", ""),
+            )
+        except ValueError as e:
+            raise HTTPException(400, detail=str(e))
+
+    @router.delete("/cxp/{cxp_id}")
+    async def delete_cxp(
+        cxp_id: str,
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Eliminar cuenta por pagar (solo si no tiene pagos)."""
+        try:
+            return await cxp_service.delete_cxp(service.db, user["org_id"], cxp_id)
+        except ValueError as e:
+            raise HTTPException(400, detail=str(e))
+
+    @router.get("/cxp/aging")
+    async def cxp_aging(
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Reporte de antigüedad de cuentas por pagar."""
+        return await cxp_service.get_aging_report(service.db, user["org_id"])
+
+    @router.get("/cxp/stats")
+    async def cxp_stats(
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Estadísticas de cuentas por pagar."""
+        return await cxp_service.get_cxp_stats(service.db, user["org_id"])
 
     return router
 
