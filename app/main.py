@@ -670,7 +670,7 @@ from app.routers.email_router import router as email_router
 app.include_router(email_router, prefix="/api/v1")
 
 from app.routers.subscription_admin_router import router as subscription_admin_router
-app.include_router(subscription_admin_router, prefix="/api/v1")
+app.include_router(subscription_admin_router)
 
 
 # ENTRYPOINT

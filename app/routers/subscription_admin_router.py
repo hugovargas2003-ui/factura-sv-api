@@ -31,7 +31,7 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 # Config: Super-admin email(s) that can manage subscriptions
 # ---------------------------------------------------------------------------
-SUPER_ADMINS = {"hugovargas2003@gmail.com"}
+SUPER_ADMINS = {"hugovargas2003@msn.com"}
 
 # Plan limits for reference
 PLAN_CONFIG = {
