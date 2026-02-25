@@ -452,11 +452,15 @@ async def transmit_dte_handler(request: Request):
     if result.status == "PROCESADO":
         try:
             from app.routers.email_router import notify_dte_by_email
+            from app.services.pdf_generator import DTEPdfGenerator
+            pdf_bytes = DTEPdfGenerator(dte_json, sello=result.sello_recepcion).generate()
             email_result = await notify_dte_by_email(
                 dte_json=dte_json,
+                pdf_bytes=pdf_bytes,
                 sello_recibido=result.sello_recepcion,
             )
-            logger.info(f"Email DTE: {email_result.get('message', 'N/A')}")
+            logger.info(f"Email DTE con PDF: {email_result.get('message', 'N/A')}")
+
         except Exception as e:
             logger.warning(f"Email DTE falló (no-bloqueante): {e}")
 
