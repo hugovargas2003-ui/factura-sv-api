@@ -19,6 +19,7 @@ from app.services import api_key_service
 from app.services import fiscal_reports
 from app.services import f07_generator
 from app.services import org_service
+from app.services import cxc_service
 from app.services import contingency_service
 
 # ── Schemas ──
@@ -824,6 +825,81 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             media_type=media,
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+
+    # ── CUENTAS POR COBRAR (T1-04) ──
+
+    @router.get("/cxc")
+    async def list_cxc(
+        estado_pago: Optional[str] = Query(None),
+        receptor_nit: Optional[str] = Query(None),
+        vencido: Optional[bool] = Query(None),
+        page: int = Query(1, ge=1),
+        per_page: int = Query(20, ge=1, le=100),
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Listar cuentas por cobrar con filtros."""
+        return await cxc_service.get_cxc_list(
+            service.db, user["org_id"],
+            estado_pago=estado_pago, receptor_nit=receptor_nit,
+            vencido=vencido, page=page, per_page=per_page,
+        )
+
+    @router.post("/cxc/{dte_id}/pago")
+    async def registrar_pago(
+        dte_id: str,
+        data: dict,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Registrar pago total o parcial de un DTE."""
+        monto = data.get("monto")
+        if not monto or float(monto) <= 0:
+            raise HTTPException(400, "monto requerido y mayor a 0")
+        try:
+            return await cxc_service.register_payment(
+                service.db, user["org_id"], dte_id,
+                monto=float(monto),
+                metodo=data.get("metodo", "efectivo"),
+                referencia=data.get("referencia", ""),
+                nota=data.get("nota", ""),
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @router.get("/cxc/aging")
+    async def aging_report(
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Reporte aging CxC (30/60/90 dias)."""
+        return await cxc_service.get_aging_report(service.db, user["org_id"])
+
+    @router.get("/cxc/stats")
+    async def cxc_stats(
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Estadisticas CxC para dashboard."""
+        return await cxc_service.get_cxc_stats(service.db, user["org_id"])
+
+    @router.patch("/cxc/{dte_id}/vencimiento")
+    async def set_fecha_vencimiento(
+        dte_id: str,
+        data: dict,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Asignar o cambiar fecha de vencimiento de un DTE."""
+        fecha = data.get("fecha_vencimiento")
+        if not fecha:
+            raise HTTPException(400, "fecha_vencimiento requerida (YYYY-MM-DD)")
+        result = service.db.table("dtes").update({
+            "fecha_vencimiento": fecha,
+        }).eq("id", dte_id).eq("org_id", user["org_id"]).execute()
+        if not result.data:
+            raise HTTPException(404, "DTE no encontrado")
+        return {"success": True, "fecha_vencimiento": fecha}
 
     # ── MULTI-ORGANIZACIÓN (T1-01) ──
 
