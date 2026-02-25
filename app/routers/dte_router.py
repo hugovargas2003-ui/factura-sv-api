@@ -25,6 +25,7 @@ from app.services import inventory_service
 from app.services import contingency_service
 from app.services import sucursal_service
 from app.services import dashboard_advanced
+from app.services.role_guard import require_role, require_admin, require_owner, get_role_permissions
 
 # ── Schemas ──
 
@@ -1458,6 +1459,19 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         user=Depends(get_current_user),
     ):
         return await dashboard_advanced.get_dashboard_advanced(service.db, user["org_id"], dias)
+
+
+    # ══════════════════════════════════════════════════════════
+    # ROLES Y PERMISOS (T2-04)
+    # ══════════════════════════════════════════════════════════
+
+    @router.get("/me/permissions")
+    async def my_permissions(user=Depends(get_current_user)):
+        """Retorna permisos del usuario actual basado en su rol."""
+        return {
+            "role": user.get("role", "member"),
+            "permissions": get_role_permissions(user.get("role", "member")),
+        }
 
     return router
 
