@@ -17,6 +17,7 @@ from app.services.import_service import import_productos, import_receptores
 from app.services.export_service import fetch_dtes_for_export, generate_xlsx, generate_pdf
 from app.services import api_key_service
 from app.services import fiscal_reports
+from app.services import f07_generator
 from app.services import contingency_service
 
 # ── Schemas ──
@@ -820,6 +821,58 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         return StreamingResponse(
             io.BytesIO(data),
             media_type=media,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    # ── F-07 ANEXOS DGII (CSV) ──
+
+    @router.get("/reports/f07/anexo1")
+    async def f07_anexo1(
+        periodo: str = Query(..., description="Formato YYYYMM, ej: 202502", min_length=6, max_length=6),
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Anexo 1 F-07 — Ventas a Contribuyentes (CCF, NC, ND). CSV para DGII."""
+        csv_bytes = await f07_generator.generate_anexo1(
+            service.db, user["org_id"], periodo
+        )
+        filename = f"Anexo1_Ventas_Contribuyentes_{periodo}.csv"
+        return StreamingResponse(
+            io.BytesIO(csv_bytes),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @router.get("/reports/f07/anexo2")
+    async def f07_anexo2(
+        periodo: str = Query(..., description="Formato YYYYMM, ej: 202502", min_length=6, max_length=6),
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Anexo 2 F-07 — Ventas a Consumidor Final (Factura, FSE), agrupado por dia. CSV para DGII."""
+        csv_bytes = await f07_generator.generate_anexo2(
+            service.db, user["org_id"], periodo
+        )
+        filename = f"Anexo2_Ventas_ConsumidorFinal_{periodo}.csv"
+        return StreamingResponse(
+            io.BytesIO(csv_bytes),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @router.get("/reports/f07/descargar")
+    async def f07_descargar_zip(
+        periodo: str = Query(..., description="Formato YYYYMM, ej: 202502", min_length=6, max_length=6),
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Descarga ZIP con ambos anexos F-07 (Anexo 1 + Anexo 2)."""
+        zip_bytes, filename = await f07_generator.generate_f07_zip(
+            service.db, user["org_id"], periodo
+        )
+        return StreamingResponse(
+            io.BytesIO(zip_bytes),
+            media_type="application/zip",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
