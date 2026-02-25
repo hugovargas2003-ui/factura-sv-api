@@ -9,6 +9,7 @@ REUTILIZA los módulos existentes:
 """
 import logging
 from app.services import webhook_service
+from app.services import audit_service
 from datetime import datetime, timezone
 
 from supabase import Client as SupabaseClient
@@ -362,6 +363,18 @@ class DTEService:
                 })
         except Exception as e:
             logger.error(f"Webhook fire error: {e}")
+
+
+        # ── Audit log (non-blocking) ──
+        try:
+            await audit_service.log_action(
+                self.db, org_id, user_id=user_id, action="dte.emitted",
+                entity_type="dte", entity_id=codigo_gen,
+                details={"tipo_dte": tipo_dte, "numero_control": numero_control,
+                          "estado": estado, "monto_total": monto_total},
+            )
+        except Exception as e:
+            logger.error(f"Audit log error: {e}")
 
         result = {
             "success": mh_result.status == "PROCESADO",

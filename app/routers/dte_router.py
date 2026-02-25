@@ -24,6 +24,7 @@ from app.services import whatsapp_service
 from app.services import cxc_service
 from app.services import cxp_service
 from app.services import webhook_service
+from app.services import audit_service
 from app.services import batch_service
 from app.services import inventory_service
 from app.services import contingency_service
@@ -1735,6 +1736,29 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             )
         except ValueError as e:
             raise HTTPException(400, detail=str(e))
+
+
+    # ── Audit Log ────────────────────────────────────────────────
+
+    @router.get("/audit")
+    async def list_audit(
+        action: str = None, entity_type: str = None, user_id: str = None,
+        date_from: str = None, date_to: str = None,
+        page: int = 1, per_page: int = 50,
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Listar registros de auditoria."""
+        return await audit_service.list_logs(
+            service.db, user["org_id"], action, entity_type,
+            user_id, date_from, date_to, page, per_page,
+        )
+
+    @router.get("/audit/summary")
+    async def audit_summary(
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Resumen de auditoria."""
+        return await audit_service.get_audit_summary(service.db, user["org_id"])
 
     return router
 
