@@ -20,6 +20,7 @@ from app.services import fiscal_reports
 from app.services import f07_generator
 from app.services import org_service
 from app.services import cxc_service
+from app.services import batch_service
 from app.services import contingency_service
 
 # ── Schemas ──
@@ -825,6 +826,81 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             media_type=media,
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+
+    # ── EMISIÓN MASIVA BATCH (T1-02) ──
+
+    @router.post("/dte/batch/preview")
+    async def batch_preview(
+        file: UploadFile = File(...),
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Preview de emisión masiva: valida CSV/XLSX sin emitir."""
+        if not file.filename:
+            raise HTTPException(400, "Archivo requerido")
+        content = await file.read()
+        if len(content) > 5 * 1024 * 1024:
+            raise HTTPException(400, "Archivo excede 5MB")
+        rows, err = batch_service.parse_batch_file(content, file.filename)
+        if err:
+            raise HTTPException(400, err)
+        if not rows:
+            raise HTTPException(400, "Archivo sin datos")
+        return batch_service.preview_batch(rows)
+
+    @router.post("/dte/batch/emit")
+    async def batch_emit(
+        file: UploadFile = File(...),
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Emisión masiva: parsea CSV/XLSX y emite DTEs secuencialmente."""
+        role = user.get("role", "member")
+        if role not in ("admin", "owner", "emisor"):
+            raise HTTPException(403, "Sin permisos para emisión masiva")
+        if not file.filename:
+            raise HTTPException(400, "Archivo requerido")
+        content = await file.read()
+        if len(content) > 5 * 1024 * 1024:
+            raise HTTPException(400, "Archivo excede 5MB")
+        rows, err = batch_service.parse_batch_file(content, file.filename)
+        if err:
+            raise HTTPException(400, err)
+        if not rows:
+            raise HTTPException(400, "Archivo sin datos")
+        if len(rows) > 100:
+            raise HTTPException(400, "Maximo 100 DTEs por batch")
+        return await batch_service.emit_batch(
+            service, user["org_id"], user["user_id"], rows
+        )
+
+    @router.get("/dte/batch/template")
+    async def batch_template(
+        user=Depends(get_current_user),
+    ):
+        """Retorna las columnas esperadas para el CSV de emisión masiva."""
+        return {
+            "required": ["tipo_dte", "receptor_tipo_doc", "receptor_num_doc",
+                         "receptor_nombre", "item_descripcion", "item_precio", "item_cantidad"],
+            "optional": ["receptor_nrc", "receptor_cod_actividad", "receptor_desc_actividad",
+                         "receptor_departamento", "receptor_municipio", "receptor_complemento",
+                         "receptor_telefono", "receptor_correo",
+                         "item_tipo", "item_unidad_medida", "item_codigo",
+                         "condicion_operacion", "observaciones"],
+            "example_row": {
+                "tipo_dte": "03",
+                "receptor_tipo_doc": "36",
+                "receptor_num_doc": "06141212711033",
+                "receptor_nombre": "EMPRESA EJEMPLO S.A.",
+                "receptor_nrc": "3319762",
+                "receptor_cod_actividad": "46900",
+                "receptor_desc_actividad": "Venta al por mayor",
+                "item_descripcion": "Servicio de consultoria",
+                "item_precio": "100.00",
+                "item_cantidad": "1",
+                "condicion_operacion": "1",
+            },
+        }
 
     # ── CUENTAS POR COBRAR (T1-04) ──
 
