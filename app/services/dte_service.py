@@ -686,6 +686,7 @@ class DTEService:
             receptor=receptor,
             items=items,
             condicion_operacion=dte_payload.get("condicion_operacion", 1),
+            observaciones=dte_payload.get("observaciones"),
         )
         dte_dict = _sanitize_dte(dte_dict)
 

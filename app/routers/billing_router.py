@@ -168,7 +168,7 @@ async def create_auto_invoice(
             iva = round(precio - precio_sin_iva, 2)
             item = {
                 "tipo_item": 2,  # Servicio
-                "descripcion": f"Suscripción mensual FACTURA-SV — Plan {req.plan_name}",
+                "descripcion": f"Servicio de Facturación Electrónica DTE — Plan {req.plan_name}",
                 "cantidad": 1,
                 "precio_unitario": precio_sin_iva,
                 "descuento": 0,
@@ -180,7 +180,7 @@ async def create_auto_invoice(
             # Factura: IVA incluido
             item = {
                 "tipo_item": 2,
-                "descripcion": f"Suscripción mensual FACTURA-SV — Plan {req.plan_name}",
+                "descripcion": f"Servicio de Facturación Electrónica DTE — Plan {req.plan_name}",
                 "cantidad": 1,
                 "precio_unitario": precio,
                 "descuento": 0,
@@ -199,6 +199,7 @@ async def create_auto_invoice(
             "fecha_emision": now.strftime("%Y-%m-%d"),
             "hora_emision": now.strftime("%H:%M:%S"),
             "condicion_operacion": 1,  # Contado
+            "observaciones": f"Servicio de Facturación Electrónica DTE — Plan {req.plan_name}. Pago procesado por Stripe.",
             "forma_pago": 5,  # Transferencia electrónica
         }
 
