@@ -363,3 +363,152 @@ async def save_whatsapp_config(
         ).execute()
 
     return {"success": True, "message": "Configuración WhatsApp guardada"}
+
+
+# ══════════════════════════════════════════════════════════
+# MANUAL PLAN ACTIVATION (cash / transfer)
+# ══════════════════════════════════════════════════════════
+
+class ManualPlanActivation(BaseModel):
+    plan: str = Field(..., description="Plan: basico, profesional, enterprise")
+    payment_method: str = Field(..., description="Método: cash o transfer")
+    months: int = Field(1, ge=1, le=12, description="Meses a activar")
+    amount: float = Field(0, ge=0, description="Monto recibido en USD")
+    reference: Optional[str] = Field(None, description="Nº referencia de transferencia")
+    notes: Optional[str] = Field(None, description="Notas internas")
+
+
+PLAN_QUOTAS = {
+    "free": 50,
+    "basico": 200,
+    "profesional": 1000,
+    "enterprise": 999999,
+}
+
+PLAN_PRICES = {
+    "basico": 14.99,
+    "profesional": 24.99,
+    "enterprise": 39.99,
+}
+
+
+@router.post("/organizations/{org_id}/activate-plan")
+async def activate_plan_manual(
+    org_id: str,
+    body: ManualPlanActivation,
+    admin: dict = Depends(require_admin),
+    db: SupabaseClient = Depends(get_supabase),
+):
+    """
+    Activar plan manualmente cuando el cliente paga por transferencia o efectivo.
+    Setea plan, payment_method, plan_expires_at, monthly_quota, plan_status.
+    """
+    if body.plan not in PLAN_QUOTAS:
+        raise HTTPException(400, f"Plan inválido. Opciones: {list(PLAN_QUOTAS.keys())}")
+    if body.payment_method not in ("cash", "transfer"):
+        raise HTTPException(400, "Método de pago debe ser 'cash' o 'transfer'")
+
+    # Verify org exists
+    org = db.table("organizations").select("id, name, plan, plan_status").eq("id", org_id).single().execute()
+    if not org.data:
+        raise HTTPException(404, "Organización no encontrada")
+
+    # Calculate expiration
+    from dateutil.relativedelta import relativedelta
+    now = datetime.utcnow()
+    expires_at = now + relativedelta(months=body.months)
+
+    # Build payment note
+    method_label = "Efectivo" if body.payment_method == "cash" else "Transferencia"
+    note = (
+        f"[{now.strftime('%Y-%m-%d %H:%M')}] "
+        f"Plan {body.plan} activado por {body.months} mes(es) — "
+        f"{method_label} ${body.amount:.2f}"
+    )
+    if body.reference:
+        note += f" — Ref: {body.reference}"
+    if body.notes:
+        note += f" — {body.notes}"
+    note += f" — Expira: {expires_at.strftime('%Y-%m-%d')}"
+
+    # Append to existing notes
+    existing_notes = org.data.get("payment_notes") or ""
+    all_notes = f"{existing_notes}\n{note}".strip()
+
+    # Update organization
+    update_data = {
+        "plan": body.plan,
+        "plan_status": "active",
+        "payment_method": body.payment_method,
+        "plan_expires_at": expires_at.isoformat(),
+        "monthly_quota": PLAN_QUOTAS[body.plan],
+        "is_active": True,
+        "payment_notes": all_notes,
+        "updated_at": now.isoformat(),
+    }
+
+    result = db.table("organizations").update(update_data).eq("id", org_id).execute()
+    if not result.data:
+        raise HTTPException(500, "Error actualizando organización")
+
+    # Log to audit if table exists
+    try:
+        db.table("audit_log").insert({
+            "org_id": org_id,
+            "user_id": admin.get("id"),
+            "action": "manual_plan_activation",
+            "entity_type": "organization",
+            "entity_id": org_id,
+            "details": {
+                "plan": body.plan,
+                "months": body.months,
+                "payment_method": body.payment_method,
+                "amount": body.amount,
+                "reference": body.reference,
+                "expires_at": expires_at.isoformat(),
+            },
+        }).execute()
+    except Exception:
+        pass  # audit_log might not exist yet
+
+    return {
+        "success": True,
+        "message": f"Plan {body.plan} activado para {org.data['name']} hasta {expires_at.strftime('%Y-%m-%d')}",
+        "data": {
+            "org_id": org_id,
+            "org_name": org.data["name"],
+            "plan": body.plan,
+            "payment_method": body.payment_method,
+            "months": body.months,
+            "amount": body.amount,
+            "expires_at": expires_at.isoformat(),
+            "monthly_quota": PLAN_QUOTAS[body.plan],
+        },
+    }
+
+
+@router.get("/manual-payments")
+async def list_manual_payments(
+    admin: dict = Depends(require_admin),
+    db: SupabaseClient = Depends(get_supabase),
+):
+    """Lista organizaciones con pago manual activo (cash/transfer)."""
+    result = db.table("organizations").select(
+        "id, name, plan, plan_status, payment_method, plan_expires_at, payment_notes, updated_at"
+    ).in_("payment_method", ["cash", "transfer"]).order("updated_at", desc=True).execute()
+
+    # Add expiration status
+    now = datetime.utcnow()
+    enriched = []
+    for org in (result.data or []):
+        exp = org.get("plan_expires_at")
+        if exp:
+            exp_dt = datetime.fromisoformat(exp.replace("Z", "+00:00")).replace(tzinfo=None)
+            org["_is_expired"] = exp_dt < now
+            org["_days_remaining"] = max(0, (exp_dt - now).days)
+        else:
+            org["_is_expired"] = False
+            org["_days_remaining"] = None
+        enriched.append(org)
+
+    return {"data": enriched, "total": len(enriched)}

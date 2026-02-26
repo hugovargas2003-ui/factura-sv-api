@@ -774,3 +774,6 @@ if __name__ == "__main__":
         port=settings.port,
         reload=settings.debug,
     )
+
+from app.routers.payments_router import router as payments_router
+app.include_router(payments_router, prefix="/api/v1")
