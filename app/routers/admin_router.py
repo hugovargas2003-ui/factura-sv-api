@@ -512,3 +512,279 @@ async def list_manual_payments(
         enriched.append(org)
 
     return {"data": enriched, "total": len(enriched)}
+
+
+# ═══════════════════════════════════════════════════════════
+# ADMIN CREATE — Organizations & Users from field
+# ═══════════════════════════════════════════════════════════
+
+class AdminCreateOrg(BaseModel):
+    """Create organization + optional owner user."""
+    name: str = Field(..., min_length=2, max_length=200)
+    nit: Optional[str] = Field(None, max_length=20)
+    nrc: Optional[str] = Field(None, max_length=20)
+    plan: str = Field("free", pattern="^(free|emprendedor|profesional|contador|enterprise)$")
+    # Optional: create owner user at same time
+    owner_email: Optional[str] = Field(None, description="Email del dueño — crea cuenta automáticamente")
+    owner_name: Optional[str] = Field(None, description="Nombre completo del dueño")
+    owner_password: Optional[str] = Field(None, min_length=6, description="Contraseña temporal")
+    # Payment info
+    payment_method: Optional[str] = Field("free", pattern="^(free|cash|transfer|stripe)$")
+    months: Optional[int] = Field(None, ge=1, le=36)
+    amount: Optional[float] = Field(None, ge=0)
+    admin_notes: Optional[str] = None
+
+
+class AdminCreateUser(BaseModel):
+    """Create user and assign to existing organization."""
+    email: str = Field(..., min_length=5, max_length=200)
+    full_name: str = Field(..., min_length=2, max_length=200)
+    password: str = Field(..., min_length=6, max_length=100, description="Contraseña temporal")
+    org_id: str = Field(..., description="UUID de la organización")
+    role: str = Field("admin", pattern="^(admin|member|viewer)$")
+
+
+PLAN_DTE_LIMITS = {
+    "free": 50,
+    "emprendedor": 200,
+    "profesional": 1000,
+    "contador": 5000,
+    "enterprise": 999999,
+}
+
+
+@router.post("/organizations/create")
+async def admin_create_organization(
+    body: AdminCreateOrg,
+    admin: dict = Depends(require_admin),
+    db: SupabaseClient = Depends(get_supabase),
+):
+    """
+    Admin creates organization from field.
+    Optionally creates owner user with Supabase Auth account.
+    
+    Flow:
+    1. Create organization row
+    2. If owner_email provided: create Supabase Auth user → users row → user_organizations
+    3. If paid plan: set expiration
+    """
+    import uuid
+    from datetime import timedelta
+
+    now = datetime.utcnow()
+
+    # 1. Check NIT uniqueness if provided
+    if body.nit:
+        existing = db.table("organizations").select("id").eq("nit", body.nit).execute()
+        if existing.data:
+            raise HTTPException(400, f"Ya existe una organización con NIT {body.nit}")
+
+    # 2. Calculate plan expiration
+    expires_at = None
+    if body.plan != "free" and body.months:
+        expires_at = (now + timedelta(days=body.months * 30)).isoformat()
+
+    # 3. Create organization
+    org_data = {
+        "name": body.name,
+        "nit": body.nit or "",
+        "nrc": body.nrc or "",
+        "plan": body.plan,
+        "plan_status": "active",
+        "is_active": True,
+        "payment_method": body.payment_method or "free",
+        "monthly_quota": PLAN_DTE_LIMITS.get(body.plan, 50),
+        "max_companies": 999,
+        "created_at": now.isoformat(),
+        "updated_at": now.isoformat(),
+    }
+
+    if expires_at:
+        org_data["plan_expires_at"] = expires_at
+        org_data["plan_started_at"] = now.isoformat()
+        org_data["plan_months"] = body.months
+
+    if body.amount:
+        method_label = {"cash": "Efectivo", "transfer": "Transferencia"}.get(body.payment_method, body.payment_method)
+        org_data["payment_notes"] = (
+            f"[{now.strftime('%Y-%m-%d')}] Creado por admin. "
+            f"{method_label} ${body.amount:.2f} x{body.months or 0}m. "
+            f"{body.admin_notes or ''}"
+        ).strip()
+    elif body.admin_notes:
+        org_data["payment_notes"] = body.admin_notes
+
+    org_result = db.table("organizations").insert(org_data).execute()
+    if not org_result.data:
+        raise HTTPException(500, "Error creando organización")
+
+    org_id = org_result.data[0]["id"]
+    response = {
+        "success": True,
+        "organization": org_result.data[0],
+        "user_created": False,
+    }
+
+    # 4. Create owner user if email provided
+    if body.owner_email:
+        try:
+            user_result = _admin_create_auth_user(
+                db=db,
+                email=body.owner_email,
+                password=body.owner_password or "FacSV2026!",
+                full_name=body.owner_name or body.name,
+                org_id=org_id,
+                role="admin",
+            )
+            response["user_created"] = True
+            response["user"] = user_result
+        except Exception as e:
+            response["user_error"] = str(e)
+            response["user_created"] = False
+
+    # 5. Log payment if paid plan
+    if body.plan != "free" and body.amount and body.amount > 0:
+        try:
+            db.table("manual_payments").insert({
+                "org_id": org_id,
+                "payment_method": body.payment_method or "cash",
+                "amount": body.amount,
+                "plan": body.plan,
+                "months": body.months or 1,
+                "status": "active",
+                "transfer_verified": True,
+                "verified_by": admin.get("email", "admin"),
+                "verified_at": now.isoformat(),
+                "period_start": now.isoformat(),
+                "period_end": expires_at,
+                "admin_notes": f"Creado desde admin panel. {body.admin_notes or ''}".strip(),
+            }).execute()
+        except Exception:
+            pass  # Non-blocking
+
+    return response
+
+
+@router.post("/users/create")
+async def admin_create_user(
+    body: AdminCreateUser,
+    admin: dict = Depends(require_admin),
+    db: SupabaseClient = Depends(get_supabase),
+):
+    """
+    Admin creates a user with Supabase Auth account and assigns to org.
+    
+    Flow:
+    1. Verify org exists
+    2. Check email not already registered
+    3. Create Supabase Auth user (email_confirm=True to skip verification)
+    4. Insert into users table
+    5. Insert into user_organizations table
+    """
+    # 1. Verify org exists
+    org = db.table("organizations").select("id, name").eq("id", body.org_id).single().execute()
+    if not org.data:
+        raise HTTPException(404, f"Organización {body.org_id} no encontrada")
+
+    # 2. Check email not already registered
+    existing = db.table("users").select("id").eq("email", body.email).execute()
+    if existing.data:
+        raise HTTPException(400, f"Ya existe un usuario con email {body.email}")
+
+    # 3. Create auth user + users row + membership
+    try:
+        result = _admin_create_auth_user(
+            db=db,
+            email=body.email,
+            password=body.password,
+            full_name=body.full_name,
+            org_id=body.org_id,
+            role=body.role,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Error creando usuario: {str(e)}")
+
+    return {
+        "success": True,
+        "message": f"Usuario {body.email} creado y asignado a {org.data['name']}",
+        "user": result,
+    }
+
+
+def _admin_create_auth_user(
+    db: SupabaseClient,
+    email: str,
+    password: str,
+    full_name: str,
+    org_id: str,
+    role: str = "admin",
+) -> dict:
+    """
+    Helper: create Supabase Auth user + users row + user_organizations.
+    Uses service_role so no email verification needed.
+    """
+    # Create Supabase Auth user (service role = auto-confirmed)
+    try:
+        auth_response = db.auth.admin.create_user({
+            "email": email,
+            "password": password,
+            "email_confirm": True,
+            "user_metadata": {
+                "full_name": full_name,
+            },
+        })
+        auth_user = auth_response.user
+        if not auth_user:
+            raise HTTPException(500, "Supabase Auth no retornó usuario")
+        user_id = str(auth_user.id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = str(e)
+        if "already been registered" in error_msg or "already exists" in error_msg:
+            raise HTTPException(400, f"El email {email} ya está registrado en Auth")
+        raise HTTPException(500, f"Error creando Auth user: {error_msg}")
+
+    now = datetime.utcnow().isoformat()
+
+    # Insert into users table
+    try:
+        db.table("users").insert({
+            "id": user_id,
+            "email": email,
+            "full_name": full_name,
+            "org_id": org_id,
+            "role": role,
+            "created_at": now,
+        }).execute()
+    except Exception as e:
+        # Rollback: delete auth user if users insert fails
+        try:
+            db.auth.admin.delete_user(user_id)
+        except Exception:
+            pass
+        raise HTTPException(500, f"Error insertando en tabla users: {str(e)}")
+
+    # Insert user_organizations membership
+    try:
+        db.table("user_organizations").insert({
+            "user_id": user_id,
+            "org_id": org_id,
+            "role": role,
+            "is_default": True,
+        }).execute()
+    except Exception as e:
+        # Non-blocking — user can still function without this
+        pass
+
+    return {
+        "user_id": user_id,
+        "email": email,
+        "full_name": full_name,
+        "org_id": org_id,
+        "role": role,
+        "password_set": True,
+        "note": "El usuario puede iniciar sesión inmediatamente con su email y contraseña.",
+    }
