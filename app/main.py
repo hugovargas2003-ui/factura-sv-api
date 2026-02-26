@@ -777,3 +777,6 @@ if __name__ == "__main__":
 
 from app.routers.payments_router import router as payments_router
 app.include_router(payments_router, prefix="/api/v1")
+
+from app.routers.config_router import router as config_router
+app.include_router(config_router, prefix="/api/v1")

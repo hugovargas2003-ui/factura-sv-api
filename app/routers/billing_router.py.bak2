@@ -60,16 +60,10 @@ class AutoInvoiceResponse(BaseModel):
 # Loaded from environment variables for security
 # ============================================================
 
-async def get_billing_emisor(db=None) -> dict:
-    """Get billing emisor config from platform_config table.
-    Falls back to hardcoded values if DB unavailable."""
-    if db:
-        try:
-            from app.services.platform_config import get_billing_emisor_from_config
-            return await get_billing_emisor_from_config(db)
-        except Exception:
-            pass
-    # Fallback to hardcoded
+def get_billing_emisor() -> dict:
+    """Get billing emisor config — must match MH-certified data exactly.
+    Keys use snake_case to match SaaS DTEBuilder expectations.
+    Values match the MH-certified registration."""
     return {
         "nit": "06141212711033",
         "nrc": "1549809",
@@ -119,7 +113,7 @@ async def create_auto_invoice(
     # This endpoint is called by the Next.js webhook, not by users directly
 
     try:
-        emisor = await get_billing_emisor(db)
+        emisor = get_billing_emisor()
         mh_creds = get_billing_mh_credentials()
 
         logger.info(f"[BILLING] MH NIT: {mh_creds['nit'][:8]}***, password len: {len(mh_creds['password'])}")

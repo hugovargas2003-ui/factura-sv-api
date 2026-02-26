@@ -39,7 +39,11 @@ PLAN_QUOTAS_LOCAL = {
     "enterprise": 999999,
 }
 
-# BAC_ACCOUNT: now loaded from platform_config DB
+BAC_ACCOUNT = {
+    "titular": "HUGO ERNESTO VARGAS OLIVA",
+    "cuenta": "201436482",
+    "banco": "Banco América Central (BAC) El Salvador",
+}
 
 
 class TransferPaymentRequest(BaseModel):
@@ -96,16 +100,15 @@ async def require_admin(user: dict = Depends(get_current_user)):
 # ══════════════════════════════════════════════════════════════
 
 @router.get("/bank-info")
-async def get_bank_info(
-    db: SupabaseClient = Depends(get_supabase),
-):
-    """Public endpoint: bank info for transfers (reads from platform_config DB)."""
-    from app.services.platform_config import get_bank_info_from_config
-    bank = await get_bank_info_from_config(db)
+async def get_bank_info():
+    """Public: returns BAC account info for transfers."""
     return {
         "success": True,
-        "message": "Información bancaria para transferencias",
-        "data": bank,
+        "data": BAC_ACCOUNT,
+        "plans": {
+            k: {"price": v, "quota": PLAN_QUOTAS_LOCAL.get(k, 0)}
+            for k, v in PLAN_PRICES.items()
+        },
     }
 
 
