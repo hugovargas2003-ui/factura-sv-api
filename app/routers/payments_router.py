@@ -25,15 +25,17 @@ router = APIRouter(prefix="/payments", tags=["payments"])
 # ══════════════════════════════════════════════════════════════
 
 PLAN_PRICES = {
-    "basico": 9.99,
+    "emprendedor": 9.99,
     "profesional": 24.99,
-    "enterprise": 39.99,
+    "contador": 49.99,
+    "enterprise": 149.99,
 }
 
 PLAN_QUOTAS_LOCAL = {
     "free": 50,
-    "basico": 200,
+    "emprendedor": 200,
     "profesional": 1000,
+    "contador": 5000,
     "enterprise": 999999,
 }
 

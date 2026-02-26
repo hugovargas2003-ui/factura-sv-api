@@ -23,8 +23,9 @@ logger = logging.getLogger("plan_enforcement")
 
 PLAN_LIMITS = {
     "free": 50,
-    "basico": 200,
+    "emprendedor": 200,
     "profesional": 1000,
+    "contador": 5000,
     "enterprise": 999999,
 }
 

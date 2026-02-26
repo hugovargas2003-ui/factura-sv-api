@@ -36,8 +36,9 @@ SUPER_ADMINS = {"hugovargas2003@msn.com"}
 # Plan limits for reference
 PLAN_CONFIG = {
     "free":         {"dte_limit": 50,    "price_monthly": 0},
-    "basico":       {"dte_limit": 200,   "price_monthly": 9.99},
-    "profesional":  {"dte_limit": 1000,  "price_monthly": 49.99},
+    "emprendedor":  {"dte_limit": 200,   "price_monthly": 9.99},
+    "profesional":  {"dte_limit": 1000,  "price_monthly": 24.99},
+    "contador":      {"dte_limit": 5000,  "price_monthly": 49.99},
     "enterprise":   {"dte_limit": 999999, "price_monthly": 149.99},
 }
 
