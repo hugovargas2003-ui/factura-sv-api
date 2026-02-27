@@ -255,6 +255,10 @@ class DTEService:
 
         logger.info(f"DTE {tipo_dte} emitido: {estado} | {codigo_gen[:8]}...")
 
+        # 9b. Deducir credito DTE si fue procesado exitosamente
+        if estado == "procesado" and insert_result.data:
+            await self._deduct_credit(org_id, insert_result.data[0]["id"])
+
         # 10. Deducir inventario automaticamente (solo DTEs que mueven mercaderia)
         if estado == "procesado" and tipo_dte in ("01", "03", "11", "14"):
             try:
@@ -598,7 +602,7 @@ class DTEService:
     BYPASS_EMAILS = {"hugovargas2003@msn.com"}
 
     async def _check_quota(self, org_id: str):
-        """Enforce monthly DTE quota and max_companies limit."""
+        """Enforce credit balance and max_companies limit."""
         # Check if org owner is bypass account
         owner = self.db.table("users").select("email").eq(
             "org_id", org_id).limit(1).execute()
@@ -606,36 +610,89 @@ class DTEService:
             return  # Unlimited access
 
         org_result = self.db.table("organizations").select(
-            "monthly_quota, plan, max_companies").eq("id", org_id).single().execute()
+            "credit_balance, plan, plan_status, plan_expires_at, max_companies"
+        ).eq("id", org_id).single().execute()
 
         if not org_result.data:
             return
 
         org = org_result.data
         plan = org.get("plan", "free")
-        quota = org.get("monthly_quota", 10)
-        max_companies = org.get("max_companies", 1)
+        balance = org.get("credit_balance", 0)
 
-        # 1. Check DTE quota (-1 or 999999 = unlimited)
-        if quota > 0 and quota < 999999:
-            count_result = self.db.rpc("get_monthly_dte_count", {"p_org_id": org_id}).execute()
-            monthly_count = count_result.data or 0
-            if monthly_count >= quota:
+        # 1. Check trial expiration
+        plan_status = org.get("plan_status", "active")
+        expires_at = org.get("plan_expires_at")
+        if plan == "free" and plan_status == "trialing" and expires_at:
+            from datetime import datetime
+            exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if exp_dt.tzinfo:
+                exp_dt = exp_dt.replace(tzinfo=None)
+            if exp_dt < datetime.utcnow():
+                self.db.table("organizations").update({
+                    "plan_status": "expired",
+                }).eq("id", org_id).execute()
                 raise DTEServiceError(
-                    f"Límite mensual alcanzado ({monthly_count}/{quota} DTEs). "
-                    f"Plan: {plan}. Actualice en /dashboard/planes",
-                    "QUOTA_EXCEEDED")
+                    "Su periodo de prueba de 3 dias ha finalizado. "
+                    "Recargue creditos DTE para continuar emitiendo.",
+                    "TRIAL_EXPIRED")
 
-        # 2. Check max companies
+        if plan_status == "expired":
+            raise DTEServiceError(
+                "Su cuenta no tiene creditos activos. "
+                "Recargue creditos en /dashboard/creditos",
+                "ACCOUNT_EXPIRED")
+
+        # 2. Check credit balance
+        if balance <= 0:
+            raise DTEServiceError(
+                "Sin creditos DTE. Recargue en /dashboard/creditos para continuar emitiendo.",
+                "NO_CREDITS")
+
+        # 3. Check max companies
+        max_companies = org.get("max_companies", 1)
         if max_companies > 0 and max_companies < 999:
             creds_count = self.db.table("dte_credentials").select(
                 "id", count="exact").eq("org_id", org_id).execute()
             companies_used = creds_count.count or 0
             if companies_used > max_companies:
                 raise DTEServiceError(
-                    f"Límite de empresas alcanzado ({companies_used}/{max_companies}). "
-                    f"Plan: {plan}. Actualice en /dashboard/planes",
+                    f"Limite de empresas alcanzado ({companies_used}/{max_companies}). "
+                    f"Recargue creditos para desbloquear mas empresas.",
                     "COMPANIES_EXCEEDED")
+
+    async def _deduct_credit(self, org_id: str, dte_id: str):
+        """Deduct 1 credit after successful DTE emission."""
+        try:
+            owner = self.db.table("users").select("email").eq(
+                "org_id", org_id).limit(1).execute()
+            if owner.data and owner.data[0].get("email") in self.BYPASS_EMAILS:
+                return  # No deduction for platform owner
+
+            org = self.db.table("organizations").select(
+                "credit_balance"
+            ).eq("id", org_id).single().execute()
+            if not org.data:
+                return
+
+            current = org.data["credit_balance"]
+            new_balance = max(0, current - 1)
+
+            self.db.table("organizations").update({
+                "credit_balance": new_balance,
+            }).eq("id", org_id).execute()
+
+            self.db.table("credit_transactions").insert({
+                "org_id": org_id,
+                "type": "usage",
+                "amount": -1,
+                "balance": new_balance,
+                "dte_id": dte_id,
+            }).execute()
+
+            logger.info(f"Credit deducted: org={org_id} balance={new_balance}")
+        except Exception as e:
+            logger.error(f"Credit deduction failed: {e}")
 
     @staticmethod
     def _creds_to_emisor(creds: dict) -> dict:
