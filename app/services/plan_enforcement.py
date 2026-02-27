@@ -26,8 +26,12 @@ PLAN_LIMITS = {
     "emprendedor": 200,
     "profesional": 1000,
     "contador": 5000,
-    "enterprise": 999999,
+    "enterprise": 10000,
 }
+
+# Orgs with unlimited access (bypass quota) — platform owner
+UNLIMITED_ORGS = set()
+
 
 
 def check_plan_status(supabase, org_id: str) -> dict:
@@ -108,6 +112,18 @@ def check_plan_status(supabase, org_id: str) -> dict:
     # 4. Check DTE quota
     plan = data.get("plan", "free")
     limit = PLAN_LIMITS.get(plan, 50)
+
+    # Bypass for platform owner (unlimited)
+    if org_id in UNLIMITED_ORGS or data.get("monthly_quota", 0) >= 999999:
+        return {
+            "plan": plan,
+            "plan_status": plan_status,
+            "payment_method": payment_method,
+            "dte_limit": 999999,
+            "dte_used": 0,
+            "dte_remaining": 999999,
+            "is_active": True,
+        }
 
     # Count DTEs this month
     month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0)
