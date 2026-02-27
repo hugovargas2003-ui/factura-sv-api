@@ -783,3 +783,6 @@ app.include_router(config_router, prefix="/api/v1")
 
 from app.routers.cron_router import router as cron_router
 app.include_router(cron_router, prefix="/api/v1")
+
+from app.routers.credits_router import router as credits_router
+app.include_router(credits_router)
