@@ -788,3 +788,202 @@ def _admin_create_auth_user(
         "password_set": True,
         "note": "El usuario puede iniciar sesión inmediatamente con su email y contraseña.",
     }
+
+
+# ══════════════════════════════════════════════════════════
+# ADMIN API KEY MANAGEMENT (for any org)
+# ══════════════════════════════════════════════════════════
+
+@router.post("/organizations/{org_id}/api-keys")
+async def admin_create_api_key(
+    org_id: str,
+    request: Request,
+    admin: dict = Depends(require_admin),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Admin generates API key for any org."""
+    import secrets, hashlib
+    data = await request.json()
+    name = data.get("name", "Admin-generated")
+    permissions = data.get("permissions", ["emit", "query"])
+
+    raw = secrets.token_hex(32)
+    full_key = f"fsv_live_{raw}"
+    prefix = f"fsv_live_{raw[:8]}..."
+    key_hash = hashlib.sha256(full_key.encode()).hexdigest()
+
+    supabase.table("api_keys").insert({
+        "org_id": org_id,
+        "key_prefix": prefix,
+        "key_hash": key_hash,
+        "name": name,
+        "permissions": permissions,
+        "is_active": True,
+        "created_by": "admin",
+    }).execute()
+
+    return {"api_key": full_key, "prefix": prefix, "name": name, "permissions": permissions}
+
+
+@router.get("/organizations/{org_id}/api-keys")
+async def admin_list_api_keys(
+    org_id: str,
+    admin: dict = Depends(require_admin),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Admin lists API keys for any org."""
+    result = supabase.table("api_keys").select(
+        "id,key_prefix,name,permissions,is_active,last_used_at,created_by,created_at"
+    ).eq("org_id", org_id).order("created_at", desc=True).execute()
+    return {"api_keys": result.data or []}
+
+
+@router.delete("/organizations/{org_id}/api-keys/{key_id}")
+async def admin_delete_api_key(
+    org_id: str, key_id: str,
+    admin: dict = Depends(require_admin),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Admin revokes API key for any org."""
+    supabase.table("api_keys").delete().eq("id", key_id).eq("org_id", org_id).execute()
+    return {"deleted": True, "id": key_id}
+
+
+# ══════════════════════════════════════════════════════════
+# ADMIN WHATSAPP PER-ORG MANAGEMENT
+# ══════════════════════════════════════════════════════════
+
+@router.get("/organizations/{org_id}/whatsapp")
+async def admin_get_org_whatsapp(
+    org_id: str,
+    admin: dict = Depends(require_admin),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Admin reads WhatsApp config for any org."""
+    result = supabase.table("org_whatsapp_config").select(
+        "id,phone_number_id,waba_id,display_phone,enabled,managed_by,"
+        "notify_credits_low,notify_dte_emitido,notify_bienvenida,notify_cobranza,updated_at"
+    ).eq("org_id", org_id).execute()
+    if result.data:
+        return result.data[0]
+    return {"enabled": False, "managed_by": "none"}
+
+
+@router.post("/organizations/{org_id}/whatsapp")
+async def admin_save_org_whatsapp(
+    org_id: str,
+    request: Request,
+    admin: dict = Depends(require_admin),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Admin configures WhatsApp for any org (managed service)."""
+    from datetime import datetime, timezone
+    data = await request.json()
+    now = datetime.now(timezone.utc).isoformat()
+
+    record = {
+        "org_id": org_id,
+        "phone_number_id": data.get("phone_number_id", ""),
+        "waba_id": data.get("waba_id", ""),
+        "display_phone": data.get("display_phone", ""),
+        "enabled": data.get("enabled", False),
+        "managed_by": "admin",
+        "notify_credits_low": data.get("notify_credits_low", True),
+        "notify_dte_emitido": data.get("notify_dte_emitido", False),
+        "notify_bienvenida": data.get("notify_bienvenida", True),
+        "notify_cobranza": data.get("notify_cobranza", False),
+        "updated_at": now,
+    }
+
+    if data.get("access_token"):
+        try:
+            from app.services.encryption_service import EncryptionService
+            enc = EncryptionService()
+            record["access_token_encrypted"] = enc.encrypt_string(data["access_token"], org_id)
+        except Exception:
+            record["access_token_encrypted"] = data["access_token"]
+
+    existing = supabase.table("org_whatsapp_config").select("id").eq("org_id", org_id).execute()
+    if existing.data:
+        supabase.table("org_whatsapp_config").update(record).eq("org_id", org_id).execute()
+    else:
+        record["created_at"] = now
+        supabase.table("org_whatsapp_config").insert(record).execute()
+
+    return {"success": True, "message": f"WhatsApp configurado para org {org_id}"}
+
+
+# ══════════════════════════════════════════════════════════
+# ADMIN CREDIT MANAGEMENT (add/deduct credits for any org)
+# ══════════════════════════════════════════════════════════
+
+@router.post("/organizations/{org_id}/credits")
+async def admin_manage_credits(
+    org_id: str,
+    request: Request,
+    admin: dict = Depends(require_admin),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Admin adds or deducts credits for any org."""
+    from datetime import datetime, timezone
+    data = await request.json()
+    amount = int(data.get("amount", 0))
+    reason = data.get("reason", "admin_adjustment")
+
+    if amount == 0:
+        raise HTTPException(400, "Amount must be non-zero")
+
+    org = supabase.table("organizations").select("credit_balance").eq("id", org_id).single().execute()
+    if not org.data:
+        raise HTTPException(404, "Org not found")
+
+    current = org.data["credit_balance"]
+    new_balance = max(0, current + amount)
+
+    supabase.table("organizations").update({"credit_balance": new_balance}).eq("id", org_id).execute()
+
+    supabase.table("credit_transactions").insert({
+        "org_id": org_id,
+        "type": "purchase" if amount > 0 else "usage",
+        "amount": amount,
+        "balance": new_balance,
+        "unit_price": 0,
+        "total_paid": 0,
+        "payment_ref": f"admin:{reason}",
+    }).execute()
+
+    return {"previous_balance": current, "adjustment": amount, "new_balance": new_balance, "reason": reason}
+
+
+# ══════════════════════════════════════════════════════════
+# ADMIN VIEW/EDIT ANY ORG CONFIG (DTE credentials, certs)
+# ══════════════════════════════════════════════════════════
+
+@router.get("/organizations/{org_id}/full-config")
+async def admin_get_org_full_config(
+    org_id: str,
+    admin: dict = Depends(require_admin),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Admin gets full config for any org: org details, credentials, API keys, WhatsApp, credits."""
+    org = supabase.table("organizations").select("*").eq("id", org_id).single().execute()
+    creds = supabase.table("dte_credentials").select("id,nit,nrc,nombre_emisor,ambiente,created_at").eq("org_id", org_id).execute()
+    keys = supabase.table("api_keys").select("id,key_prefix,name,is_active,last_used_at,created_by,created_at").eq("org_id", org_id).execute()
+    wa = supabase.table("org_whatsapp_config").select("*").eq("org_id", org_id).execute()
+    credits = supabase.table("credit_transactions").select("*").eq("org_id", org_id).order("created_at", desc=True).limit(10).execute()
+    receptores = supabase.table("receptores_frecuentes").select("id", count="exact").eq("org_id", org_id).execute()
+    dtes_emitidos = supabase.table("dtes").select("id", count="exact").eq("org_id", org_id).execute()
+    dtes_recibidos = supabase.table("dte_recibidos").select("id", count="exact").eq("org_id", org_id).execute()
+
+    return {
+        "organization": org.data,
+        "credentials": creds.data or [],
+        "api_keys": keys.data or [],
+        "whatsapp": wa.data[0] if wa.data else None,
+        "recent_credits": credits.data or [],
+        "counts": {
+            "receptores": receptores.count or 0,
+            "dtes_emitidos": dtes_emitidos.count or 0,
+            "dtes_recibidos": dtes_recibidos.count or 0,
+        },
+    }

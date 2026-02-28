@@ -795,3 +795,9 @@ app.include_router(dte_recibidos_router)
 
 from app.routers.reconciliacion_router import router as reconciliacion_router
 app.include_router(reconciliacion_router)
+
+from app.routers.apikeys_router import router as apikeys_router
+app.include_router(apikeys_router)
+
+from app.routers.org_whatsapp_router import router as org_whatsapp_router
+app.include_router(org_whatsapp_router)
