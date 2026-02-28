@@ -759,8 +759,6 @@ app.include_router(admin_router, prefix="/api/v1")
 from app.routers.email_router import router as email_router
 app.include_router(email_router, prefix="/api/v1")
 
-from app.routers.subscription_admin_router import router as subscription_admin_router
-app.include_router(subscription_admin_router)
 
 
 # ENTRYPOINT
@@ -775,8 +773,6 @@ if __name__ == "__main__":
         reload=settings.debug,
     )
 
-from app.routers.payments_router import router as payments_router
-app.include_router(payments_router, prefix="/api/v1")
 
 from app.routers.config_router import router as config_router
 app.include_router(config_router, prefix="/api/v1")
