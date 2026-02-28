@@ -12,7 +12,7 @@ from datetime import datetime
 import math
 import logging
 
-from app.dependencies import get_supabase, get_current_user
+from app.dependencies import get_supabase, get_current_user, get_encryption
 
 logger = logging.getLogger("credits")
 router = APIRouter(prefix="/api/v1", tags=["credits"])
@@ -164,6 +164,7 @@ async def purchase_credits(
     req: PurchaseRequest,
     user=Depends(get_current_user),
     supabase=Depends(get_supabase),
+    encryption=Depends(get_encryption),
 ):
     """Purchase DTE credits. Calculates price dynamically."""
     params = get_pricing_params(supabase)
@@ -201,10 +202,31 @@ async def purchase_credits(
         "balance": new_balance,
         "unit_price": unit_price,
         "total_paid": total,
-        "payment_ref": req.payment_ref or f"{req.metodo_pago}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+        "payment_ref": payment_ref,
     }).execute()
 
+    payment_ref = req.payment_ref or f"{req.metodo_pago}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
     logger.info(f"Credits purchased: org={org_id} qty={req.cantidad} total=${total} balance={new_balance}")
+
+    # ── Auto-emit CCF/Factura for the purchase ──
+    invoice_result = {"success": False}
+    try:
+        from app.services.auto_invoice_helper import emit_purchase_invoice
+        invoice_result = await emit_purchase_invoice(
+            supabase=supabase,
+            encryption=encryption,
+            org_id=org_id,
+            cantidad=req.cantidad,
+            total_paid=total,
+            metodo_pago=req.metodo_pago,
+            payment_ref=payment_ref,
+        )
+        if invoice_result.get("success"):
+            logger.info(f"Auto-invoice OK: {invoice_result.get('codigo_generacion')}")
+        else:
+            logger.warning(f"Auto-invoice skipped/failed: {invoice_result.get('error')}")
+    except Exception as e:
+        logger.error(f"Auto-invoice error (non-blocking): {e}")
 
     return PurchaseResponse(
         credits_added=req.cantidad,

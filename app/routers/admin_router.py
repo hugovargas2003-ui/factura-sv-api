@@ -956,6 +956,181 @@ async def admin_manage_credits(
 
 
 # ══════════════════════════════════════════════════════════
+# ADMIN: CASH PAYMENT — Credits + Auto-Invoice
+# ══════════════════════════════════════════════════════════
+
+@router.post("/organizations/{org_id}/cash-payment")
+async def admin_cash_payment(
+    org_id: str,
+    request: Request,
+    admin: dict = Depends(require_admin),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """
+    Admin registers a cash payment: credits added + auto-factura emitted.
+    Body: {"cantidad": 500, "amount_received": 56.65, "payment_ref": "Efectivo en oficina", "metodo": "cash"}
+    """
+    from app.dependencies import get_encryption as _get_enc
+    body = await request.json()
+    cantidad = int(body.get("cantidad", 0))
+    amount_received = float(body.get("amount_received", 0))
+    payment_ref = body.get("payment_ref", f"cash_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}")
+    metodo = body.get("metodo", "cash")  # cash | transfer | admin_grant
+
+    if cantidad < 10:
+        raise HTTPException(400, "Minimo 10 creditos")
+    if amount_received < 0:
+        raise HTTPException(400, "Monto invalido")
+
+    # 1. Get current balance
+    org = supabase.table("organizations").select("credit_balance, name").eq("id", org_id).single().execute()
+    if not org.data:
+        raise HTTPException(404, "Org not found")
+
+    current = org.data["credit_balance"]
+    new_balance = current + cantidad
+
+    # 2. Update balance
+    supabase.table("organizations").update({"credit_balance": new_balance}).eq("id", org_id).execute()
+
+    # 3. Record transaction
+    supabase.table("credit_transactions").insert({
+        "org_id": org_id,
+        "type": "purchase",
+        "amount": cantidad,
+        "balance": new_balance,
+        "unit_price": round(amount_received / cantidad, 4) if cantidad > 0 else 0,
+        "total_paid": amount_received,
+        "payment_ref": payment_ref,
+    }).execute()
+
+    # 4. Auto-emit invoice (non-blocking)
+    invoice_result = {"success": False, "error": "Not attempted"}
+    if amount_received > 0:
+        try:
+            from app.services.auto_invoice_helper import emit_purchase_invoice
+            from app.dependencies import EncryptionService
+            encryption = EncryptionService()
+            invoice_result = await emit_purchase_invoice(
+                supabase=supabase,
+                encryption=encryption,
+                org_id=org_id,
+                cantidad=cantidad,
+                total_paid=amount_received,
+                metodo_pago=metodo,
+                payment_ref=payment_ref,
+            )
+        except Exception as e:
+            invoice_result = {"success": False, "error": str(e)}
+
+    return {
+        "org_id": org_id,
+        "org_name": org.data.get("name", ""),
+        "previous_balance": current,
+        "credits_added": cantidad,
+        "new_balance": new_balance,
+        "amount_received": amount_received,
+        "payment_ref": payment_ref,
+        "metodo": metodo,
+        "invoice": invoice_result,
+    }
+
+
+@router.post("/organizations/{org_id}/verify-transfer")
+async def admin_verify_transfer(
+    org_id: str,
+    request: Request,
+    admin: dict = Depends(require_admin),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """
+    Admin verifies a BAC transfer against bank statement.
+    Body: {"transaction_id": "...", "verified": true, "bank_ref": "TRF-123456"}
+    If verified=false, suspends account and flags for DTE invalidation.
+    """
+    body = await request.json()
+    transaction_id = body.get("transaction_id")
+    verified = body.get("verified", True)
+    bank_ref = body.get("bank_ref", "")
+    admin_notes = body.get("notes", "")
+
+    if not transaction_id:
+        raise HTTPException(400, "transaction_id requerido")
+
+    # Get the transaction
+    tx = supabase.table("credit_transactions").select("*").eq("id", transaction_id).single().execute()
+    if not tx.data:
+        raise HTTPException(404, "Transaccion no encontrada")
+
+    tx_data = tx.data
+    now_str = datetime.utcnow().isoformat()
+
+    if verified:
+        # Mark as verified
+        supabase.table("credit_transactions").update({
+            "verified": True,
+            "verified_at": now_str,
+            "verified_by": admin["user_id"],
+            "bank_ref": bank_ref,
+            "admin_notes": admin_notes,
+        }).eq("id", transaction_id).execute()
+
+        return {
+            "status": "verified",
+            "transaction_id": transaction_id,
+            "org_id": tx_data["org_id"],
+            "amount": tx_data["amount"],
+            "message": f"Transferencia verificada. Ref bancaria: {bank_ref}",
+        }
+    else:
+        # FRAUD: Suspend account + reverse credits + flag DTE for invalidation
+        org_id_tx = tx_data["org_id"]
+        credits_to_reverse = tx_data["amount"]
+
+        # Reverse credits
+        org = supabase.table("organizations").select("credit_balance").eq("id", org_id_tx).single().execute()
+        if org.data:
+            current = org.data["credit_balance"]
+            new_balance = max(0, current - credits_to_reverse)
+            supabase.table("organizations").update({
+                "credit_balance": new_balance,
+                "plan_status": "suspended",
+            }).eq("id", org_id_tx).execute()
+
+            # Record reversal transaction
+            supabase.table("credit_transactions").insert({
+                "org_id": org_id_tx,
+                "type": "reversal",
+                "amount": -credits_to_reverse,
+                "balance": new_balance,
+                "payment_ref": f"fraud_reversal:{transaction_id}",
+                "admin_notes": f"Transferencia no verificada. {admin_notes}",
+            }).execute()
+
+        # Mark original transaction as fraudulent
+        supabase.table("credit_transactions").update({
+            "verified": False,
+            "verified_at": now_str,
+            "verified_by": admin["user_id"],
+            "admin_notes": f"FRAUDE: {admin_notes}",
+        }).eq("id", transaction_id).execute()
+
+        # Flag invoice for invalidation if one was emitted
+        invoice_codigo = tx_data.get("invoice_codigo")
+
+        return {
+            "status": "fraud_detected",
+            "transaction_id": transaction_id,
+            "org_id": org_id_tx,
+            "credits_reversed": credits_to_reverse,
+            "account_suspended": True,
+            "invoice_to_invalidate": invoice_codigo,
+            "message": f"Cuenta suspendida. {credits_to_reverse} creditos revertidos. "
+                       f"{'DTE ' + invoice_codigo + ' marcado para invalidacion.' if invoice_codigo else 'Sin DTE asociado.'}",
+        }
+
+
+# ══════════════════════════════════════════════════════════
 # ADMIN VIEW/EDIT ANY ORG CONFIG (DTE credentials, certs)
 # ══════════════════════════════════════════════════════════
 
