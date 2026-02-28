@@ -801,3 +801,6 @@ app.include_router(apikeys_router)
 
 from app.routers.org_whatsapp_router import router as org_whatsapp_router
 app.include_router(org_whatsapp_router)
+
+from app.routers.legal_router import router as legal_router
+app.include_router(legal_router)
