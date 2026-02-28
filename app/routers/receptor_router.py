@@ -128,6 +128,60 @@ async def _upsert_receptor(supabase, org_id: str, data: dict):
         return {"action": "created", "receptor": result.data[0] if result.data else None, "uso_count": 1}
 
 
+
+def generate_fiscal_card(nombre: str, nit: str, qr_data: str) -> bytes:
+    """Genera imagen PNG de tarjeta fiscal digital con branding profesional."""
+    from PIL import Image, ImageDraw, ImageFont
+    import qrcode as qr_lib
+    from io import BytesIO
+
+    W, H = 900, 560
+    img = Image.new("RGB", (W, H), "#FFFFFF")
+    draw = ImageDraw.Draw(img)
+
+    draw.rectangle([0, 0, W-1, H-1], outline="#1565C0", width=4)
+    draw.rectangle([0, 0, W, 70], fill="#0D2137")
+
+    try:
+        font_bold = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
+        font_normal = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 18)
+        font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
+        font_name = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 22)
+    except Exception:
+        font_bold = ImageFont.load_default()
+        font_normal = font_bold
+        font_small = font_bold
+        font_name = font_bold
+
+    draw.text((20, 18), "FACTURA-SV", fill="#FFFFFF", font=font_bold)
+    draw.text((230, 25), "Tarjeta Fiscal Digital", fill="#90CAF9", font=font_normal)
+
+    qr = qr_lib.QRCode(version=None, error_correction=qr_lib.constants.ERROR_CORRECT_M, box_size=8, border=1)
+    qr.add_data(qr_data)
+    qr.make(fit=True)
+    qr_img = qr.make_image(fill_color="#0D2137", back_color="white").convert("RGB")
+    qr_img = qr_img.resize((280, 280))
+    img.paste(qr_img, (580, 100))
+
+    y = 100
+    draw.text((30, y), "TITULAR", fill="#888888", font=font_small); y += 24
+    draw.text((30, y), nombre[:40], fill="#0D2137", font=font_name); y += 36
+    draw.text((30, y), "NIT / DOCUMENTO", fill="#888888", font=font_small); y += 24
+    draw.text((30, y), nit, fill="#333333", font=font_normal); y += 50
+    draw.line([(30, y), (540, y)], fill="#E0E0E0", width=1); y += 20
+    draw.text((30, y), "Presente esta tarjeta para", fill="#555555", font=font_normal); y += 26
+    draw.text((30, y), "facturacion instantanea", fill="#555555", font=font_normal); y += 40
+    draw.text((30, y), "Datos encriptados AES-256. No se almacenan en servidor.", fill="#999999", font=font_small)
+
+    draw.rectangle([0, H-40, W, H], fill="#F5F5F5")
+    draw.text((20, H-30), "factura-sv.algoritmos.io/mi-tarjeta-fiscal", fill="#1565C0", font=font_small)
+    draw.text((W-200, H-30), "Powered by FACTURA-SV", fill="#999999", font=font_small)
+
+    buffer = BytesIO()
+    img.save(buffer, format="PNG", quality=95)
+    return buffer.getvalue()
+
+
 # ── QR Endpoints ──
 
 @router.post("/receptores/qr/generate")
@@ -162,10 +216,19 @@ async def generate_receptor_qr_public(
     qr_string = encrypt_receptor_data(data, key)
     qr_image = generate_qr_image(qr_string)
     qr_base64 = base64.b64encode(qr_image).decode('ascii')
+    card_image = generate_fiscal_card(
+        nombre=data.get("nombre", ""),
+        nit=data.get("num_documento", ""),
+        qr_data=qr_string
+    )
+    card_base64 = base64.b64encode(card_image).decode('ascii')
+
     return {
         "qr_data": qr_string,
         "qr_image_base64": qr_base64,
         "qr_image_data_url": f"data:image/png;base64,{qr_base64}",
+        "card_image_base64": card_base64,
+        "card_image_data_url": f"data:image/png;base64,{card_base64}",
         "qr_size_chars": len(qr_string),
     }
 

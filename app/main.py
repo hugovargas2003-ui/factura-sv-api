@@ -789,3 +789,9 @@ app.include_router(credits_router)
 
 from app.routers.receptor_router import router as receptor_router
 app.include_router(receptor_router)
+
+from app.routers.dte_recibidos_router import router as dte_recibidos_router
+app.include_router(dte_recibidos_router)
+
+from app.routers.reconciliacion_router import router as reconciliacion_router
+app.include_router(reconciliacion_router)
