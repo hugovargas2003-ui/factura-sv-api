@@ -1131,6 +1131,34 @@ async def admin_verify_transfer(
 
 
 # ══════════════════════════════════════════════════════════
+# ADMIN: ALL CREDIT TRANSACTIONS (global view)
+# ══════════════════════════════════════════════════════════
+
+@router.get("/credit-transactions")
+async def admin_list_credit_transactions(
+    admin: dict = Depends(require_admin),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """List recent credit transactions across all orgs."""
+    txs = supabase.table("credit_transactions").select(
+        "id, org_id, type, amount, balance, unit_price, total_paid, payment_ref, "
+        "invoice_codigo, invoice_tipo, verified, verified_at, bank_ref, admin_notes, created_at"
+    ).order("created_at", desc=True).limit(200).execute()
+
+    # Enrich with org names
+    org_ids = list(set(t["org_id"] for t in (txs.data or [])))
+    org_map = {}
+    if org_ids:
+        orgs = supabase.table("organizations").select("id, name").in_("id", org_ids).execute()
+        org_map = {o["id"]: o["name"] for o in (orgs.data or [])}
+
+    for tx in (txs.data or []):
+        tx["org_name"] = org_map.get(tx["org_id"], "Unknown")
+
+    return {"data": txs.data or [], "total": len(txs.data or [])}
+
+
+# ══════════════════════════════════════════════════════════
 # ADMIN VIEW/EDIT ANY ORG CONFIG (DTE credentials, certs)
 # ══════════════════════════════════════════════════════════
 
