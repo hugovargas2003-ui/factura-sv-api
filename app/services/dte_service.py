@@ -259,6 +259,13 @@ class DTEService:
         if estado == "procesado" and insert_result.data:
             await self._deduct_credit(org_id, insert_result.data[0]["id"])
 
+        # 9c. Auto-guardar receptor en directorio de frecuentes
+        if estado == "procesado" and receptor:
+            try:
+                await self._autosave_receptor(org_id, receptor)
+            except Exception as e:
+                logger.warning(f"Auto-save receptor failed: {e}")
+
         # 10. Deducir inventario automaticamente (solo DTEs que mueven mercaderia)
         if estado == "procesado" and tipo_dte in ("01", "03", "11", "14"):
             try:
@@ -693,6 +700,49 @@ class DTEService:
             logger.info(f"Credit deducted: org={org_id} balance={new_balance}")
         except Exception as e:
             logger.error(f"Credit deduction failed: {e}")
+
+    async def _autosave_receptor(self, org_id: str, receptor: dict):
+        """Auto-save receptor to directorio de frecuentes after successful DTE."""
+        num_doc = receptor.get("numDocumento") or receptor.get("num_documento")
+        nombre = receptor.get("nombre")
+        if not num_doc or not nombre:
+            return
+
+        tipo_doc = receptor.get("tipoDocumento") or receptor.get("tipo_documento") or "36"
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+
+        existing = self.db.table("receptores_frecuentes").select(
+            "id, uso_count"
+        ).eq("org_id", org_id).eq("tipo_documento", tipo_doc).eq("num_documento", num_doc).execute()
+
+        data = {
+            "org_id": org_id,
+            "tipo_documento": tipo_doc,
+            "num_documento": num_doc,
+            "nrc": receptor.get("nrc") or None,
+            "nombre": nombre,
+            "nombre_comercial": receptor.get("nombreComercial") or receptor.get("nombre_comercial") or None,
+            "cod_actividad": receptor.get("codActividad") or receptor.get("cod_actividad") or None,
+            "desc_actividad": receptor.get("descActividad") or receptor.get("desc_actividad") or None,
+            "direccion_departamento": (receptor.get("direccion", {}) or {}).get("departamento") or receptor.get("direccion_departamento") or None,
+            "direccion_municipio": (receptor.get("direccion", {}) or {}).get("municipio") or receptor.get("direccion_municipio") or None,
+            "direccion_complemento": (receptor.get("direccion", {}) or {}).get("complemento") or receptor.get("direccion_complemento") or None,
+            "telefono": receptor.get("telefono") or None,
+            "correo": receptor.get("correo") or None,
+        }
+
+        if existing.data and len(existing.data) > 0:
+            count = existing.data[0]["uso_count"]
+            self.db.table("receptores_frecuentes").update({
+                **data, "uso_count": count + 1, "last_used_at": now, "updated_at": now
+            }).eq("id", existing.data[0]["id"]).execute()
+        else:
+            self.db.table("receptores_frecuentes").insert({
+                **data, "uso_count": 1, "last_used_at": now, "created_at": now, "updated_at": now
+            }).execute()
+
+        logger.info(f"Receptor auto-saved: {num_doc} for org={org_id}")
 
     @staticmethod
     def _creds_to_emisor(creds: dict) -> dict:
