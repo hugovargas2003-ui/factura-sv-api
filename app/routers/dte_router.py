@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 import io
 
 from app.services.import_service import import_productos, import_receptores
+from app.services.smart_import_service import auto_map_columns, parse_file_to_rows, smart_import
 from app.services.export_service import fetch_dtes_for_export, generate_xlsx, generate_pdf
 from app.services import api_key_service
 from app.services import fiscal_reports
@@ -662,6 +663,93 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         if len(content) > 5 * 1024 * 1024:
             raise HTTPException(400, "Archivo excede 5MB.")
         result = await import_productos(content, file.filename, user["org_id"], service.db)
+        return result
+
+    # ── SMART IMPORT (universal column mapper for ANY file format) ──
+
+    @router.post("/smart-import/analyze")
+    async def analyze_import_file(
+        file: UploadFile = File(...),
+        import_type: str = Query(..., regex="^(productos|receptores)$"),
+        user=Depends(get_current_user),
+    ):
+        """
+        Step 1: Upload file -> get auto-mapped columns + preview.
+        User can review/adjust mapping before executing import.
+        """
+        content = await file.read()
+        rows, headers, error = parse_file_to_rows(content, file.filename or "file.csv")
+        if error:
+            raise HTTPException(400, error)
+        if not rows:
+            raise HTTPException(400, "Archivo vacio")
+
+        map_result = auto_map_columns(headers, import_type)
+
+        # Preview: first 5 rows with mapping applied
+        from app.services.smart_import_service import apply_mapping
+        preview_rows = apply_mapping(rows[:5], map_result["mapping"], import_type)
+
+        return {
+            "headers": headers,
+            "total_rows": len(rows),
+            "mapping": map_result["mapping"],
+            "confidence": map_result["confidence"],
+            "unmapped": map_result["unmapped"],
+            "expected_fields": map_result["preview_fields"],
+            "preview": preview_rows,
+        }
+
+    @router.post("/smart-import/execute")
+    async def execute_smart_import(
+        file: UploadFile = File(...),
+        import_type: str = Query(..., regex="^(productos|receptores)$"),
+        mapping_json: str = Query(None, description="JSON string of custom mapping override"),
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """
+        Step 2: Import with confirmed mapping.
+        If mapping_json provided, uses custom mapping; otherwise auto-maps.
+        """
+        import json as json_lib
+        content = await file.read()
+        custom_mapping = None
+        if mapping_json:
+            try:
+                custom_mapping = json_lib.loads(mapping_json)
+            except Exception:
+                raise HTTPException(400, "mapping_json invalido")
+
+        result = await smart_import(
+            content=content,
+            filename=file.filename or "file.csv",
+            org_id=user["org_id"],
+            import_type=import_type,
+            supabase=service.db,
+            custom_mapping=custom_mapping,
+        )
+        return result
+
+    @router.post("/smart-import/one-step")
+    async def smart_import_one_step(
+        file: UploadFile = File(...),
+        import_type: str = Query(..., regex="^(productos|receptores)$"),
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """
+        One-step auto-import: maps + imports in single call.
+        Best for API/programmatic use.
+        """
+        content = await file.read()
+        result = await smart_import(
+            content=content,
+            filename=file.filename or "file.csv",
+            org_id=user["org_id"],
+            import_type=import_type,
+            supabase=service.db,
+        )
         return result
 
     @router.post("/receptores/import")
