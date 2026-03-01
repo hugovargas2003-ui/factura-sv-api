@@ -1131,6 +1131,128 @@ async def admin_verify_transfer(
 
 
 # ══════════════════════════════════════════════════════════
+# ADMIN: BILLING POOL (accountant firm → client orgs)
+# ══════════════════════════════════════════════════════════
+
+@router.post("/organizations/{org_id}/set-billing-pool")
+async def admin_set_billing_pool(
+    org_id: str,
+    request: Request,
+    admin: dict = Depends(require_admin),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """
+    Set billing_org_id for a client org so credits are deducted from the parent.
+    Body: {"billing_org_id": "uuid-of-accountant-firm"} or {"billing_org_id": null} to remove.
+    """
+    body = await request.json()
+    billing_org_id = body.get("billing_org_id")
+
+    # Validate target org exists
+    org = supabase.table("organizations").select("id, name").eq("id", org_id).single().execute()
+    if not org.data:
+        raise HTTPException(404, "Organizacion no encontrada")
+
+    # Validate billing org exists (if not null)
+    if billing_org_id:
+        parent = supabase.table("organizations").select("id, name, credit_balance").eq("id", billing_org_id).single().execute()
+        if not parent.data:
+            raise HTTPException(404, "Organizacion de facturacion no encontrada")
+        parent_name = parent.data["name"]
+        parent_balance = parent.data["credit_balance"]
+    else:
+        parent_name = None
+        parent_balance = None
+
+    # Update
+    supabase.table("organizations").update({
+        "billing_org_id": billing_org_id,
+    }).eq("id", org_id).execute()
+
+    if billing_org_id:
+        return {
+            "status": "pool_assigned",
+            "org": org.data["name"],
+            "billing_org": parent_name,
+            "billing_balance": parent_balance,
+            "message": f"{org.data['name']} ahora consume creditos de {parent_name} (balance: {parent_balance})",
+        }
+    else:
+        return {
+            "status": "pool_removed",
+            "org": org.data["name"],
+            "message": f"{org.data['name']} ahora usa su propio balance de creditos",
+        }
+
+
+@router.get("/organizations/{org_id}/pool-usage")
+async def admin_pool_usage(
+    org_id: str,
+    admin: dict = Depends(require_admin),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """
+    View credit usage for all orgs in a billing pool.
+    Call with the parent (accountant firm) org_id.
+    """
+    # Get all orgs that bill to this org
+    children = supabase.table("organizations").select(
+        "id, name, billing_org_id"
+    ).eq("billing_org_id", org_id).execute()
+
+    # Get parent info
+    parent = supabase.table("organizations").select(
+        "id, name, credit_balance"
+    ).eq("id", org_id).single().execute()
+
+    if not parent.data:
+        raise HTTPException(404, "Organizacion no encontrada")
+
+    # Get usage per child from credit_transactions
+    child_ids = [c["id"] for c in (children.data or [])]
+    usage_map = {}
+
+    if child_ids:
+        # Get all usage transactions that reference child orgs in admin_notes
+        txs = supabase.table("credit_transactions").select(
+            "amount, admin_notes, created_at"
+        ).eq("org_id", org_id).eq("type", "usage").order("created_at", desc=True).limit(500).execute()
+
+        for tx in (txs.data or []):
+            notes = tx.get("admin_notes") or ""
+            if notes.startswith("emit_by:"):
+                child_id = notes.replace("emit_by:", "")
+                usage_map[child_id] = usage_map.get(child_id, 0) + 1
+
+    # Also count direct usage (parent emitting for itself)
+    direct_count = supabase.table("credit_transactions").select(
+        "id", count="exact"
+    ).eq("org_id", org_id).eq("type", "usage").is_("admin_notes", "null").execute()
+
+    result = {
+        "parent": {
+            "id": org_id,
+            "name": parent.data["name"],
+            "credit_balance": parent.data["credit_balance"],
+            "direct_usage": direct_count.count or 0,
+        },
+        "children": [],
+        "total_pool_usage": (direct_count.count or 0),
+    }
+
+    for child in (children.data or []):
+        child_usage = usage_map.get(child["id"], 0)
+        result["children"].append({
+            "id": child["id"],
+            "name": child["name"],
+            "usage": child_usage,
+        })
+        result["total_pool_usage"] += child_usage
+
+    return result
+
+
+# ══════════════════════════════════════════════════════════
 # ADMIN: ALL CREDIT TRANSACTIONS (global view)
 # ══════════════════════════════════════════════════════════
 

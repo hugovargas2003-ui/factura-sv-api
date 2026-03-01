@@ -608,17 +608,33 @@ class DTEService:
     # Accounts with unlimited access (no quota enforcement)
     BYPASS_EMAILS = {"hugovargas2003@msn.com"}
 
+    async def _resolve_billing_org(self, org_id: str) -> str:
+        """Resolve billing org: if org has billing_org_id (pool), use that instead."""
+        try:
+            result = self.db.table("organizations").select(
+                "billing_org_id"
+            ).eq("id", org_id).single().execute()
+            if result.data and result.data.get("billing_org_id"):
+                return result.data["billing_org_id"]
+        except Exception:
+            pass
+        return org_id
+
     async def _check_quota(self, org_id: str):
-        """Enforce credit balance and max_companies limit."""
+        """Enforce credit balance and max_companies limit.
+        Supports billing pool: if org has billing_org_id, checks parent balance."""
         # Check if org owner is bypass account
         owner = self.db.table("users").select("email").eq(
             "org_id", org_id).limit(1).execute()
         if owner.data and owner.data[0].get("email") in self.BYPASS_EMAILS:
             return  # Unlimited access
 
+        # Resolve billing org (pool support for accountant firms)
+        billing_id = await self._resolve_billing_org(org_id)
+
         org_result = self.db.table("organizations").select(
             "credit_balance, plan, plan_status, plan_expires_at, max_companies"
-        ).eq("id", org_id).single().execute()
+        ).eq("id", billing_id).single().execute()
 
         if not org_result.data:
             return
@@ -669,16 +685,20 @@ class DTEService:
                     "COMPANIES_EXCEEDED")
 
     async def _deduct_credit(self, org_id: str, dte_id: str):
-        """Deduct 1 credit after successful DTE emission."""
+        """Deduct 1 credit after successful DTE emission.
+        Supports billing pool: deducts from billing_org if configured."""
         try:
             owner = self.db.table("users").select("email").eq(
                 "org_id", org_id).limit(1).execute()
             if owner.data and owner.data[0].get("email") in self.BYPASS_EMAILS:
                 return  # No deduction for platform owner
 
+            # Resolve billing org (pool support)
+            billing_id = await self._resolve_billing_org(org_id)
+
             org = self.db.table("organizations").select(
                 "credit_balance"
-            ).eq("id", org_id).single().execute()
+            ).eq("id", billing_id).single().execute()
             if not org.data:
                 return
 
@@ -687,17 +707,19 @@ class DTEService:
 
             self.db.table("organizations").update({
                 "credit_balance": new_balance,
-            }).eq("id", org_id).execute()
+            }).eq("id", billing_id).execute()
 
             self.db.table("credit_transactions").insert({
-                "org_id": org_id,
+                "org_id": billing_id,
                 "type": "usage",
                 "amount": -1,
                 "balance": new_balance,
                 "dte_id": dte_id,
+                "admin_notes": f"emit_by:{org_id}" if billing_id != org_id else None,
             }).execute()
 
-            logger.info(f"Credit deducted: org={org_id} balance={new_balance}")
+            pool_tag = f" (pool:{billing_id})" if billing_id != org_id else ""
+            logger.info(f"Credit deducted: org={org_id}{pool_tag} balance={new_balance}")
         except Exception as e:
             logger.error(f"Credit deduction failed: {e}")
 
