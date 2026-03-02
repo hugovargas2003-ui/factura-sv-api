@@ -40,12 +40,44 @@ from app.schemas.models import InvalidateRequest, TipoResponsable
 logger = logging.getLogger("factura-sv.dte_service")
 
 
+
+# ── Plan feature limits ──────────────────────────────────────
+PLAN_FEATURE_LIMITS = {
+    "free":          {"monthly_quota": 50,     "max_users": 1,  "max_sucursales": 1, "max_api_keys": 1,  "max_webhooks": 2,  "batch_limit": 0,   "rate_limit_hour": 100},
+    "emprendedor":   {"monthly_quota": 200,    "max_users": 3,  "max_sucursales": 1, "max_api_keys": 3,  "max_webhooks": 5,  "batch_limit": 10,  "rate_limit_hour": 500},
+    "basico":        {"monthly_quota": 200,    "max_users": 3,  "max_sucursales": 1, "max_api_keys": 3,  "max_webhooks": 5,  "batch_limit": 10,  "rate_limit_hour": 500},
+    "profesional":   {"monthly_quota": 1000,   "max_users": 10, "max_sucursales": 3, "max_api_keys": 10, "max_webhooks": 10, "batch_limit": 50,  "rate_limit_hour": 2000},
+    "empresarial":   {"monthly_quota": 999999, "max_users": 999,"max_sucursales": 999,"max_api_keys": 999,"max_webhooks": 999,"batch_limit": 999, "rate_limit_hour": 10000},
+    "enterprise":    {"monthly_quota": 999999, "max_users": 999,"max_sucursales": 999,"max_api_keys": 999,"max_webhooks": 999,"batch_limit": 999, "rate_limit_hour": 10000},
+    "contador":      {"monthly_quota": 5000,   "max_users": 999,"max_sucursales": 999,"max_api_keys": 999,"max_webhooks": 999,"batch_limit": 100, "rate_limit_hour": 5000},
+}
+
+def get_plan_limits(plan: str) -> dict:
+    """Get feature limits for a plan tier."""
+    return PLAN_FEATURE_LIMITS.get(plan, PLAN_FEATURE_LIMITS["free"])
+
 class DTEServiceError(Exception):
     def __init__(self, message: str, code: str = "DTE_ERROR"):
         self.message = message
         self.code = code
         super().__init__(message)
 
+
+
+# ── Plan feature limits ──────────────────────────────────────
+PLAN_FEATURE_LIMITS = {
+    "free":          {"monthly_quota": 50,     "max_users": 1,  "max_sucursales": 1, "max_api_keys": 1,  "max_webhooks": 2,  "batch_limit": 0,   "rate_limit_hour": 100},
+    "emprendedor":   {"monthly_quota": 200,    "max_users": 3,  "max_sucursales": 1, "max_api_keys": 3,  "max_webhooks": 5,  "batch_limit": 10,  "rate_limit_hour": 500},
+    "basico":        {"monthly_quota": 200,    "max_users": 3,  "max_sucursales": 1, "max_api_keys": 3,  "max_webhooks": 5,  "batch_limit": 10,  "rate_limit_hour": 500},
+    "profesional":   {"monthly_quota": 1000,   "max_users": 10, "max_sucursales": 3, "max_api_keys": 10, "max_webhooks": 10, "batch_limit": 50,  "rate_limit_hour": 2000},
+    "empresarial":   {"monthly_quota": 999999, "max_users": 999,"max_sucursales": 999,"max_api_keys": 999,"max_webhooks": 999,"batch_limit": 999, "rate_limit_hour": 10000},
+    "enterprise":    {"monthly_quota": 999999, "max_users": 999,"max_sucursales": 999,"max_api_keys": 999,"max_webhooks": 999,"batch_limit": 999, "rate_limit_hour": 10000},
+    "contador":      {"monthly_quota": 5000,   "max_users": 999,"max_sucursales": 999,"max_api_keys": 999,"max_webhooks": 999,"batch_limit": 100, "rate_limit_hour": 5000},
+}
+
+def get_plan_limits(plan: str) -> dict:
+    """Get feature limits for a plan tier."""
+    return PLAN_FEATURE_LIMITS.get(plan, PLAN_FEATURE_LIMITS["free"])
 
 class DTEService:
     """Servicio principal de emisión DTE multi-tenant SaaS."""
