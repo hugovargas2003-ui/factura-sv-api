@@ -182,6 +182,7 @@ class DTEService:
         dcl_params: dict | None = None,
         cd_params: dict | None = None,
         sucursal_id: str | None = None,
+        emitted_via: str = "web",
     ) -> dict:
         # 1. Validar credenciales y certificado
         creds = await self._get_credentials(org_id)
@@ -282,7 +283,7 @@ class DTEService:
             "documento_jws": signed_jwt,
             "created_by": user_id,
             "sucursal_id": sucursal_id,
-            "emitted_via": kwargs.get("emitted_via", "web"),
+            "emitted_via": emitted_via,
         }
         insert_result = self.db.table("dtes").insert(dte_record).execute()
 
