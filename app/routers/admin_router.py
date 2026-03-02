@@ -1312,3 +1312,80 @@ async def admin_get_org_full_config(
             "dtes_recibidos": dtes_recibidos.count or 0,
         },
     }
+
+
+# ── API Subscription Admin Controls ──
+
+class ActivateApiPlan(BaseModel):
+    plan: str = Field(..., description="piloto | produccion | enterprise")
+    months: int = Field(default=12, description="Meses de acceso")
+    payment_method: str = Field(default="admin_grant", description="admin_grant | cash | transfer")
+    admin_notes: str = Field(default="")
+
+API_PLAN_QUOTAS = {
+    "api_piloto": 2000,
+    "api_produccion": 10000,
+    "api_enterprise": 999999,
+}
+
+@router.post("/organizations/{org_id}/activate-api-plan")
+async def activate_api_plan(
+    org_id: str,
+    body: ActivateApiPlan,
+    admin: dict = Depends(require_admin),
+    db: SupabaseClient = Depends(get_supabase),
+):
+    """Admin: Activate API plan for an org (bypass Stripe)."""
+    from datetime import timedelta
+    plan_key = f"api_{body.plan}"
+    if plan_key not in API_PLAN_QUOTAS:
+        raise HTTPException(400, f"Plan invalido. Opciones: piloto, produccion, enterprise")
+    
+    org = db.table("organizations").select("id, name").eq("id", org_id).single().execute()
+    if not org.data:
+        raise HTTPException(404, "Organizacion no encontrada")
+    
+    now = datetime.utcnow()
+    expires_at = (now + timedelta(days=body.months * 30)).isoformat()
+    
+    db.table("organizations").update({
+        "plan": plan_key,
+        "plan_status": "active",
+        "plan_started_at": now.isoformat(),
+        "plan_expires_at": expires_at,
+        "monthly_quota": API_PLAN_QUOTAS[plan_key],
+        "payment_method": body.payment_method,
+        "payment_notes": f"[{now.strftime('%Y-%m-%d')}] {plan_key} activado por admin. {body.months}m. {body.admin_notes}",
+        "updated_at": now.isoformat(),
+    }).eq("id", org_id).execute()
+    
+    return {
+        "success": True,
+        "plan": plan_key,
+        "expires_at": expires_at,
+        "monthly_quota": API_PLAN_QUOTAS[plan_key],
+        "org_name": org.data["name"],
+    }
+
+
+@router.post("/organizations/{org_id}/deactivate-api-plan")
+async def deactivate_api_plan(
+    org_id: str,
+    admin: dict = Depends(require_admin),
+    db: SupabaseClient = Depends(get_supabase),
+):
+    """Admin: Deactivate API plan, revoke keys, downgrade to free."""
+    db.table("organizations").update({
+        "plan": "free",
+        "plan_status": "active",
+        "monthly_quota": 50,
+        "stripe_subscription_id": None,
+        "plan_expires_at": None,
+        "payment_method": "free",
+        "updated_at": datetime.utcnow().isoformat(),
+    }).eq("id", org_id).execute()
+    
+    # Revoke all API keys
+    db.table("api_keys").update({"is_active": False}).eq("org_id", org_id).execute()
+    
+    return {"success": True, "message": f"Org {org_id} degradada a free. API keys revocadas."}
