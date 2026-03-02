@@ -264,6 +264,29 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         }).eq("org_id", user["org_id"]).execute()
         return {"success": True, "message": "Logo guardado", "size_kb": round(len(logo_content) / 1024, 1)}
 
+    
+    @router.patch("/config/ambiente")
+    async def update_ambiente(
+        request: Request,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Toggle ambiente 00/01. Only updates ambiente + mh_api_base_url."""
+        body = await request.json()
+        ambiente = body.get("ambiente")
+        if ambiente not in ("00", "01"):
+            raise HTTPException(400, "ambiente must be '00' or '01'")
+        mh_url = "https://api.dtes.mh.gob.sv" if ambiente == "01" else "https://apitest.dtes.mh.gob.sv"
+        org_id = user["org_id"]
+        existing = service.db.table("mh_credentials").select("id").eq("org_id", org_id).execute()
+        if not existing.data:
+            raise HTTPException(404, "No hay credenciales configuradas.")
+        service.db.table("mh_credentials").update({
+            "ambiente": ambiente, "mh_api_base_url": mh_url,
+        }).eq("org_id", org_id).execute()
+        label = "Produccion" if ambiente == "01" else "Pruebas"
+        return {"success": True, "ambiente": ambiente, "mh_api_base_url": mh_url, "message": f"Ambiente cambiado a {label}"}
+
     @router.get("/config/logo")
     async def get_logo(
         service=Depends(get_dte_service),
