@@ -332,7 +332,7 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
     async def emit_dte(
         data: DTEEmitRequest,
         service=Depends(get_dte_service),
-        user=Depends(get_current_user_or_api_key),
+        user=Depends(get_current_user),
     ):
         """Emitir un DTE (todos los 13 tipos soportados)."""
         try:
