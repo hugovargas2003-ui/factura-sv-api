@@ -263,7 +263,7 @@ class TransmitService:
         elif response.status_code == 400:
             observaciones = data.get("observaciones", [])
             raise TransmitError(
-                message=f"El MH rechazó el DTE: {data.get('descripcionMsg', 'Error de validación')}",
+                message=f"El MH rechazó el DTE: {data.get('descripcionMsg', 'Error de validación')}. Observaciones: {data.get('observaciones', [])}",
                 status_code=400,
                 mh_response=data,
                 observaciones=observaciones if isinstance(observaciones, list) else [str(observaciones)],
