@@ -6,6 +6,7 @@ Inyección de dependencias para autenticación y servicios.
 import os
 from functools import lru_cache
 
+from typing import Optional
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import create_client, Client as SupabaseClient
@@ -84,4 +85,64 @@ async def get_current_user(
         "email": result.data.get("email", ""),
         "role": result.data.get("role", "member"),
         "full_name": result.data.get("full_name", ""),
+    }
+
+
+# ── Dual Auth: JWT or API Key ──
+
+async def get_current_user_or_api_key(
+    request: Request,
+    supabase: SupabaseClient = Depends(get_supabase),
+) -> dict:
+    """
+    Authenticate via JWT (web dashboard) or API key (integrators).
+    Returns user dict with extra field 'auth_source': 'web' | 'api'.
+    API keys use header: Authorization: Bearer fsv_live_...
+    """
+    from app.services.api_key_service import validate_api_key
+
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(401, "Authorization header requerido")
+
+    token = auth_header.replace("Bearer ", "").strip()
+
+    # Check if it's an API key (starts with fsv_live_)
+    if token.startswith("fsv_live_"):
+        result = await validate_api_key(supabase, token)
+        if not result:
+            raise HTTPException(401, "API key invalida o inactiva")
+        return {
+            "user_id": result.get("created_by", "api"),
+            "org_id": result["org_id"],
+            "email": "",
+            "role": "api_integrator",
+            "full_name": f"API: {result.get('name', 'key')}",
+            "auth_source": "api",
+            "api_key_id": result.get("key_id"),
+        }
+
+    # Otherwise, validate as JWT
+    try:
+        user_response = supabase.auth.get_user(token)
+        user = user_response.user
+        if not user:
+            raise HTTPException(401, "Token invalido o expirado")
+    except Exception:
+        raise HTTPException(401, "Token invalido o expirado")
+
+    result = supabase.table("users").select(
+        "org_id, role, email, full_name"
+    ).eq("id", user.id).single().execute()
+
+    if not result.data:
+        raise HTTPException(403, "Usuario sin organizacion asignada")
+
+    return {
+        "user_id": user.id,
+        "org_id": result.data["org_id"],
+        "email": result.data.get("email", ""),
+        "role": result.data.get("role", "member"),
+        "full_name": result.data.get("full_name", ""),
+        "auth_source": "web",
     }

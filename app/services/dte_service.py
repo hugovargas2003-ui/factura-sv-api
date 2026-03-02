@@ -282,6 +282,7 @@ class DTEService:
             "documento_jws": signed_jwt,
             "created_by": user_id,
             "sucursal_id": sucursal_id,
+            "emitted_via": kwargs.get("emitted_via", "web"),
         }
         insert_result = self.db.table("dtes").insert(dte_record).execute()
 

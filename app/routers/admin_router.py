@@ -1389,3 +1389,89 @@ async def deactivate_api_plan(
     db.table("api_keys").update({"is_active": False}).eq("org_id", org_id).execute()
     
     return {"success": True, "message": f"Org {org_id} degradada a free. API keys revocadas."}
+
+
+# ── DTE Metrics: API vs Web ──
+
+@router.get("/dte-metrics")
+async def get_dte_metrics(
+    days: int = 30,
+    admin: dict = Depends(require_admin),
+    db: SupabaseClient = Depends(get_supabase),
+):
+    """
+    DTE emission metrics: API vs Web breakdown.
+    Returns totals, daily counts, and per-org API usage.
+    """
+    from datetime import timedelta
+
+    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+
+    # All DTEs in period
+    all_dtes = db.table("dtes").select(
+        "id, org_id, tipo_dte, monto_total, emitted_via, estado, created_at"
+    ).gte("created_at", cutoff).eq("estado", "procesado").order("created_at", desc=True).limit(5000).execute()
+
+    rows = all_dtes.data or []
+
+    # Totals
+    total_web = sum(1 for r in rows if (r.get("emitted_via") or "web") == "web")
+    total_api = sum(1 for r in rows if r.get("emitted_via") == "api")
+    revenue_web = sum(float(r.get("monto_total") or 0) for r in rows if (r.get("emitted_via") or "web") == "web")
+    revenue_api = sum(float(r.get("monto_total") or 0) for r in rows if r.get("emitted_via") == "api")
+
+    # Daily breakdown
+    daily = {}
+    for r in rows:
+        day = (r.get("created_at") or "")[:10]
+        via = r.get("emitted_via") or "web"
+        if day not in daily:
+            daily[day] = {"web": 0, "api": 0, "web_revenue": 0, "api_revenue": 0}
+        daily[day][via] += 1
+        daily[day][f"{via}_revenue"] += float(r.get("monto_total") or 0)
+
+    daily_sorted = [{"date": k, **v} for k, v in sorted(daily.items())]
+
+    # Per-org API usage (software houses)
+    api_orgs = {}
+    for r in rows:
+        if r.get("emitted_via") == "api":
+            oid = r["org_id"]
+            if oid not in api_orgs:
+                api_orgs[oid] = {"count": 0, "revenue": 0}
+            api_orgs[oid]["count"] += 1
+            api_orgs[oid]["revenue"] += float(r.get("monto_total") or 0)
+
+    # Enrich with org names
+    api_org_list = []
+    for oid, data in sorted(api_orgs.items(), key=lambda x: x[1]["count"], reverse=True):
+        org = db.table("organizations").select("name, plan").eq("id", oid).single().execute()
+        api_org_list.append({
+            "org_id": oid,
+            "name": org.data["name"] if org.data else "?",
+            "plan": org.data["plan"] if org.data else "?",
+            **data,
+        })
+
+    # DTE type breakdown
+    by_type = {}
+    for r in rows:
+        via = r.get("emitted_via") or "web"
+        tipo = r.get("tipo_dte", "?")
+        key = f"{via}_{tipo}"
+        by_type[key] = by_type.get(key, 0) + 1
+
+    return {
+        "period_days": days,
+        "totals": {
+            "web": total_web,
+            "api": total_api,
+            "total": total_web + total_api,
+            "web_revenue": round(revenue_web, 2),
+            "api_revenue": round(revenue_api, 2),
+            "total_revenue": round(revenue_web + revenue_api, 2),
+        },
+        "daily": daily_sorted,
+        "api_orgs": api_org_list,
+        "by_type": by_type,
+    }
