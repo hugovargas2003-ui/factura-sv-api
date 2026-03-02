@@ -21,6 +21,7 @@ REGLAS CRITICAS NO DOCUMENTADAS:
 import uuid
 from datetime import date, datetime
 from typing import Any
+from app.utils.sanitize import sanitize_nrc
 
 
 def _uuid() -> str:
@@ -169,7 +170,7 @@ class DTEBuilder:
         rec = {
             "tipoDocumento": receptor.get("tipo_documento", "36"),
             "numDocumento": receptor.get("num_documento") or receptor.get("nit"),
-            "nrc": receptor.get("nrc"), "nombre": receptor["nombre"],
+            "nrc": sanitize_nrc(receptor.get("nrc")), "nombre": receptor["nombre"],
             "codActividad": receptor.get("cod_actividad"),
             "descActividad": receptor.get("desc_actividad"),
             "nombreComercial": receptor.get("nombre_comercial"),
@@ -234,7 +235,7 @@ class DTEBuilder:
                         "fechaEmision": ref.get("fecha_emision", _now_date())}]
         e = self.emisor
         emisor_nota = {
-            "nit": e["nit"], "nrc": e["nrc"], "nombre": e["nombre"],
+            "nit": e["nit"], "nrc": sanitize_nrc(e["nrc"]), "nombre": e["nombre"],
             "codActividad": e["cod_actividad"], "descActividad": e["desc_actividad"],
             "nombreComercial": e.get("nombre_comercial"),
             "tipoEstablecimiento": e.get("tipo_establecimiento", "01"),
@@ -280,7 +281,7 @@ class DTEBuilder:
         }
         e = self.emisor
         emisor_cr = {
-            "nit": e["nit"], "nrc": e["nrc"], "nombre": e["nombre"],
+            "nit": e["nit"], "nrc": sanitize_nrc(e["nrc"]), "nombre": e["nombre"],
             "codActividad": e["cod_actividad"], "descActividad": e["desc_actividad"],
             "nombreComercial": e.get("nombre_comercial"),
             "direccion": {"departamento": e["direccion_departamento"],
@@ -294,7 +295,7 @@ class DTEBuilder:
         rec = {
             "tipoDocumento": receptor.get("tipo_documento", "36"),
             "numDocumento": receptor.get("num_documento") or receptor.get("nit"),
-            "nrc": receptor.get("nrc"), "nombre": receptor["nombre"],
+            "nrc": sanitize_nrc(receptor.get("nrc")), "nombre": receptor["nombre"],
             "nombreComercial": receptor.get("nombre_comercial"),
             "codActividad": receptor.get("cod_actividad"),
             "descActividad": receptor.get("desc_actividad"),
@@ -385,7 +386,7 @@ class DTEBuilder:
         }
         e = self.emisor
         emisor_dcl = {
-            "nit": e["nit"], "nrc": e["nrc"], "nombre": e["nombre"],
+            "nit": e["nit"], "nrc": sanitize_nrc(e["nrc"]), "nombre": e["nombre"],
             "codActividad": e["cod_actividad"], "descActividad": e["desc_actividad"],
             "nombreComercial": e.get("nombre_comercial"),
             "tipoEstablecimiento": e.get("tipo_establecimiento", "01"),
@@ -497,7 +498,7 @@ class DTEBuilder:
         }
         e = self.emisor
         emisor_fse = {
-            "nit": e["nit"], "nrc": e["nrc"], "nombre": e["nombre"],
+            "nit": e["nit"], "nrc": sanitize_nrc(e["nrc"]), "nombre": e["nombre"],
             "codActividad": e["cod_actividad"], "descActividad": e["desc_actividad"],
             "direccion": {"departamento": e["direccion_departamento"],
                           "municipio": e["direccion_municipio"],
@@ -545,7 +546,7 @@ class DTEBuilder:
         donante = {
             "tipoDocumento": receptor.get("tipo_documento", "36"),
             "numDocumento": receptor.get("num_documento") or receptor.get("nit"),
-            "nrc": receptor.get("nrc"), "nombre": receptor["nombre"],
+            "nrc": sanitize_nrc(receptor.get("nrc")), "nombre": receptor["nombre"],
             "nombreComercial": receptor.get("nombre_comercial"),
             "codActividad": receptor.get("cod_actividad"),
             "descActividad": receptor.get("desc_actividad"),
@@ -557,7 +558,7 @@ class DTEBuilder:
         }
         e = self.emisor
         donatario = {
-            "nit": e["nit"], "nrc": e["nrc"], "nombre": e["nombre"],
+            "nit": e["nit"], "nrc": sanitize_nrc(e["nrc"]), "nombre": e["nombre"],
             "nombreComercial": e.get("nombre_comercial"),
             "codActividad": e["cod_actividad"], "descActividad": e["desc_actividad"],
             "direccion": {"departamento": e["direccion_departamento"],
@@ -609,7 +610,7 @@ class DTEBuilder:
     def _emisor_std(self) -> dict:
         e = self.emisor
         return {
-            "nit": e["nit"], "nrc": e["nrc"], "nombre": e["nombre"],
+            "nit": e["nit"], "nrc": sanitize_nrc(e["nrc"]), "nombre": e["nombre"],
             "codActividad": e["cod_actividad"], "descActividad": e["desc_actividad"],
             "nombreComercial": e.get("nombre_comercial"),
             "tipoEstablecimiento": e.get("tipo_establecimiento", "01"),
@@ -627,7 +628,7 @@ class DTEBuilder:
         return {
             "tipoDocumento": r.get("tipo_documento", "36"),
             "numDocumento": r.get("num_documento"),
-            "nrc": r.get("nrc"), "nombre": r["nombre"],
+            "nrc": sanitize_nrc(r.get("nrc")), "nombre": r["nombre"],
             "codActividad": r.get("cod_actividad"),
             "descActividad": r.get("desc_actividad"),
             "direccion": {"departamento": r.get("direccion_departamento", "06"),
@@ -639,7 +640,7 @@ class DTEBuilder:
     def _rec_ccf(self, r: dict) -> dict:
         return {
             "nit": r.get("nit") or r.get("num_documento"),
-            "nrc": r.get("nrc"), "nombre": r["nombre"],
+            "nrc": sanitize_nrc(r.get("nrc")), "nombre": r["nombre"],
             "codActividad": r.get("cod_actividad"),
             "descActividad": r.get("desc_actividad"),
             "nombreComercial": r.get("nombre_comercial"),
