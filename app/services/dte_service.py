@@ -34,7 +34,7 @@ def _sanitize_dte(d):
         return [_sanitize_dte(i) for i in d]
     if isinstance(d, str) and d.strip() == "":
         return None
-    return d, DTE_VERSIONS
+    return d
 from app.schemas.models import InvalidateRequest, TipoResponsable
 
 logger = logging.getLogger("factura-sv.dte_service")
