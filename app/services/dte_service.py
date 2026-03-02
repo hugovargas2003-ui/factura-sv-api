@@ -36,6 +36,7 @@ def _sanitize_dte(d):
         return None
     return d
 from app.schemas.models import InvalidateRequest, TipoResponsable
+from app.mh.dte_builder import DTE_VERSIONS
 
 logger = logging.getLogger("factura-sv.dte_service")
 
