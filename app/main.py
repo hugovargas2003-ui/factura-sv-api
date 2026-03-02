@@ -678,7 +678,7 @@ async def generate_control_number(
 # SAAS LAYER: DTE EMISSION (Sprint 1)
 # ─────────────────────────────────────────────────────────────
 
-from app.dependencies import get_dte_service, get_current_user
+from app.dependencies import get_dte_service, get_current_user, get_current_user_or_api_key
 from app.routers.dte_router import create_dte_router
 
 # --- Public DTE Verification (no auth required) ---
@@ -745,7 +745,7 @@ async def verificar_dte(codigo_generacion: str, request: Request):
 
 _dte_router = create_dte_router(
     get_dte_service=get_dte_service,
-    get_current_user=get_current_user,
+    get_current_user=get_current_user_or_api_key,
 )
 app.include_router(_dte_router)
 
