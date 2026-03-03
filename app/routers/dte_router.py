@@ -1560,23 +1560,23 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         return suc
 
     @router.post("/sucursales")
-    async def create_sucursal(request: Request, user=Depends(get_current_user)):
+    async def create_sucursal(request: Request, user=Depends(get_current_user), service=Depends(get_dte_service)):
         data = await request.json()
         if not data.get("nombre"):
             raise HTTPException(400, "nombre es requerido")
-        return await sucursal_service.create_sucursal(db, user["org_id"], data)
+        return await sucursal_service.create_sucursal(service.db, user["org_id"], data)
 
     @router.put("/sucursales/{sucursal_id}")
-    async def update_sucursal(sucursal_id: str, request: Request, user=Depends(get_current_user)):
+    async def update_sucursal(sucursal_id: str, request: Request, user=Depends(get_current_user), service=Depends(get_dte_service)):
         data = await request.json()
-        result = await sucursal_service.update_sucursal(db, user["org_id"], sucursal_id, data)
+        result = await sucursal_service.update_sucursal(service.db, user["org_id"], sucursal_id, data)
         if not result:
             raise HTTPException(404, "Sucursal no encontrada o sin cambios")
         return result
 
     @router.delete("/sucursales/{sucursal_id}")
-    async def delete_sucursal(sucursal_id: str, user=Depends(get_current_user)):
-        result = await sucursal_service.delete_sucursal(db, user["org_id"], sucursal_id)
+    async def delete_sucursal(sucursal_id: str, user=Depends(get_current_user), service=Depends(get_dte_service)):
+        result = await sucursal_service.delete_sucursal(service.db, user["org_id"], sucursal_id)
         if "error" in result:
             raise HTTPException(400, result["error"])
         return result
