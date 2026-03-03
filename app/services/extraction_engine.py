@@ -95,10 +95,20 @@ class ExtractionEngine:
         self.ai_client = None
         self.ai_provider = None
 
-        # Preferir Anthropic (Claude) si está disponible
+        # Auto-read from env vars if not passed explicitly
+        if not openai_api_key:
+            openai_api_key = os.environ.get("OPENAI_API_KEY")
+        if not anthropic_api_key:
+            anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
+        deepseek_api_key = os.environ.get("DEEPSEEK_API_KEY")
+
+        # Priority: Anthropic > DeepSeek > OpenAI
         if use_ai_fallback and ANTHROPIC_OK and anthropic_api_key:
             self.ai_client = Anthropic(api_key=anthropic_api_key)
             self.ai_provider = "anthropic"
+        elif use_ai_fallback and OPENAI_OK and deepseek_api_key:
+            self.ai_client = OpenAI(api_key=deepseek_api_key, base_url="https://api.deepseek.com")
+            self.ai_provider = "deepseek"
         elif use_ai_fallback and OPENAI_OK and openai_api_key:
             self.ai_client = OpenAI(api_key=openai_api_key)
             self.ai_provider = "openai"
@@ -427,6 +437,16 @@ class ExtractionEngine:
                     messages=[{"role": "user", "content": prompt}],
                 )
                 raw = resp.content[0].text
+            elif self.ai_provider == "deepseek":
+                resp = self.ai_client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[
+                        {"role": "system", "content": "Eres un extractor de datos de facturas salvadoreñas. Responde SOLO con JSON válido."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0,
+                )
+                raw = resp.choices[0].message.content
             else:
                 resp = self.ai_client.chat.completions.create(
                     model="gpt-4o-mini",
