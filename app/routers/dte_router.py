@@ -556,8 +556,8 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
 
     # ── CATÁLOGO RECEPTORES ──
 
-    @router.get("/receptores")
-    async def list_receptores(
+    @router.get("/catalogo-receptores")
+    async def list_catalogo_receptores(
         search: Optional[str] = None,
         tipo: Optional[str] = None,
         favorites_only: bool = False,
@@ -578,8 +578,8 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
 
         return query.limit(50).execute().data
 
-    @router.post("/receptores")
-    async def create_receptor(
+    @router.post("/catalogo-receptores")
+    async def create_catalogo_receptor(
         data: ReceptorCatalogoRequest,
         service=Depends(get_dte_service),
         user=Depends(get_current_user),
@@ -589,7 +589,7 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         record["org_id"] = user["org_id"]
         return service.db.table("dte_receptores").insert(record).execute().data
 
-    @router.put("/receptores/{receptor_id}")
+    @router.put("/catalogo-receptores/{receptor_id}")
     async def update_receptor(
         receptor_id: str,
         data: ReceptorCatalogoRequest,
@@ -601,7 +601,7 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             data.model_dump()
         ).eq("id", receptor_id).eq("org_id", user["org_id"]).execute().data
 
-    @router.delete("/receptores/{receptor_id}")
+    @router.delete("/catalogo-receptores/{receptor_id}")
     async def delete_receptor(
         receptor_id: str,
         service=Depends(get_dte_service),
