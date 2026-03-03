@@ -1311,10 +1311,11 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
     async def f07_anexo3(
         periodo: str = Query(..., description="YYYY-MM"),
         user=Depends(get_current_user),
+        service=Depends(get_dte_service),
     ):
         """Genera Anexo 3 F-07 — Retenciones (tipo 07)."""
         csv_bytes = await f07_generator.generate_anexo3(
-            db, user["org_id"], periodo
+            service.db, user["org_id"], periodo
         )
         return Response(content=csv_bytes, media_type="text/csv",
                         headers={"Content-Disposition": f'attachment; filename="F07_Anexo3_{periodo}.csv"'})
@@ -1621,12 +1622,12 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         """Enviar PDF del DTE por WhatsApp Cloud API."""
         org_id = user["org_id"]
         # Get WhatsApp config
-        wa_config = await whatsapp_service.get_whatsapp_config(db, org_id)
+        wa_config = await whatsapp_service.get_whatsapp_config(service.db, org_id)
         if not wa_config.get("configured") or not wa_config.get("enabled"):
             raise HTTPException(400, "WhatsApp no está configurado. Vaya a Configuración > WhatsApp.")
 
         # Get DTE
-        dte_result = db.table("dtes").select("*").eq("id", dte_id).eq("org_id", org_id).single().execute()
+        dte_result = service.db.table("dtes").select("*").eq("id", dte_id).eq("org_id", org_id).single().execute()
         if not dte_result.data:
             raise HTTPException(404, "DTE no encontrado")
         dte = dte_result.data
@@ -1650,7 +1651,7 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             raise HTTPException(500, f"Error generando PDF: {e}")
 
         # Get decrypted access token
-        creds = db.table("dte_credentials").select(
+        creds = service.db.table("dte_credentials").select(
             "whatsapp_phone_number_id, whatsapp_access_token_encrypted"
         ).eq("org_id", org_id).single().execute()
 
@@ -1671,9 +1672,9 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         return result
 
     @router.get("/config/whatsapp")
-    async def get_whatsapp_config(user=Depends(get_current_user)):
+    async def get_whatsapp_config(user=Depends(get_current_user), service=Depends(get_dte_service)):
         """Obtener configuración WhatsApp de la org."""
-        return await whatsapp_service.get_whatsapp_config(db, user["org_id"])
+        return await whatsapp_service.get_whatsapp_config(service.db, user["org_id"])
 
     @router.post("/config/whatsapp")
     async def save_whatsapp_config_endpoint(
@@ -1684,7 +1685,7 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         """Guardar configuración WhatsApp."""
         data = await request.json()
         return await whatsapp_service.save_whatsapp_config(
-            db, user["org_id"], service.encryption, data
+            service.db, user["org_id"], service.encryption, data
         )
 
     # ══════════════════════════════════════════════════════════
@@ -1707,11 +1708,12 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         fecha_desde: str = Query(..., description="YYYY-MM-DD"),
         fecha_hasta: str = Query(..., description="YYYY-MM-DD"),
         user=Depends(get_current_user),
+        service=Depends(get_dte_service),
     ):
         """Reporte consolidado cross-org por rango de fechas."""
         try:
             result = await contador_service.get_cross_org_report(
-                db, user["user_id"], fecha_desde, fecha_hasta
+                service.db, user["user_id"], fecha_desde, fecha_hasta
             )
             return result
         except Exception as e:
@@ -1721,6 +1723,7 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
     async def contador_add_client(
         request: Request,
         user=Depends(get_current_user),
+        service=Depends(get_dte_service),
     ):
         """Crear nueva org cliente y vincular al contador como owner."""
         data = await request.json()
@@ -1728,7 +1731,7 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             raise HTTPException(400, "El nombre de la empresa es requerido")
         try:
             result = await contador_service.add_client_org(
-                db, user["user_id"], user["org_id"], data
+                service.db, user["user_id"], user["org_id"], data
             )
             return result
         except ValueError as e:
