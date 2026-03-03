@@ -290,9 +290,12 @@ class DTEService:
 
         logger.info(f"DTE {tipo_dte} emitido: {estado} | {codigo_gen[:8]}...")
 
-        # 9b. Deducir credito DTE si fue procesado exitosamente
-        if estado == "procesado" and insert_result.data:
+        # 9b. Deducir credito DTE si fue procesado exitosamente (solo producción)
+        ambiente = dte_dict.get("identificacion", {}).get("ambiente", "00")
+        if estado == "procesado" and insert_result.data and ambiente == "01":
             await self._deduct_credit(org_id, insert_result.data[0]["id"])
+        elif estado == "procesado" and ambiente != "01":
+            logger.info(f"Crédito NO descontado: ambiente={ambiente} (solo se descuenta en producción)")
 
         # 9c. Auto-guardar receptor en directorio de frecuentes
         if estado == "procesado" and receptor:
