@@ -94,10 +94,12 @@ async def get_whatsapp_config(supabase: Any, org_id: str) -> dict:
     """Get WhatsApp configuration for an org."""
     result = supabase.table("dte_credentials").select(
         "whatsapp_phone_number_id, whatsapp_waba_id, whatsapp_enabled"
-    ).eq("org_id", org_id).single().execute()
+    ).eq("org_id", org_id).limit(1).execute()
 
-    if not result.data:
+    if not result.data or len(result.data) == 0:
         return {"configured": False, "enabled": False}
+    
+    result.data = result.data[0]  # normalize to single row
 
     return {
         "configured": bool(result.data.get("whatsapp_phone_number_id")),
