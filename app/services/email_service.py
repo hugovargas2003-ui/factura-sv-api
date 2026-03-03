@@ -1,16 +1,23 @@
 """
-FACTURA-SV: Servicio de Email via Google Script
-================================================
+FACTURA-SV: Servicio de Email via Google Apps Script
+=====================================================
 Envía DTE (PDF + JSON) al receptor automáticamente tras emisión.
+Usa el GAS elaborado que genera HTML profesional con QR, items, totales.
 """
 import base64
 import json
 import logging
+import os
 import httpx
 
 logger = logging.getLogger(__name__)
 
-GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw5CyNlSex8xL2vJBxSjg4DOCjwzUkQgiUwgJPO1L7t9H4Z8ZCJ3glCP6chJ4Vtru6ADg/exec"
+# URL y API Key del Google Apps Script (variables de entorno en Railway)
+GAS_URL = os.getenv(
+    "DTE_EMAIL_WEBHOOK_URL",
+    os.getenv("EMAIL_SCRIPT_URL", ""),
+)
+GAS_API_KEY = os.getenv("DTE_EMAIL_API_KEY", "")
 
 DTE_NOMBRES = {
     "01": "Factura", "03": "Comprobante de Crédito Fiscal",
@@ -35,50 +42,85 @@ async def send_dte_email(
     pdf_bytes: bytes,
     dte_json: dict,
 ) -> bool:
-    """Envía PDF + JSON del DTE al receptor por email."""
+    """Envía PDF + JSON del DTE al receptor via Google Apps Script."""
     if not receptor_email:
-        logger.warning(f"DTE {codigo_generacion[:8]}: sin email de receptor, no se envía")
+        logger.warning(f"DTE {codigo_generacion[:8]}: sin email de receptor")
         return False
 
-    nombre_dte = DTE_NOMBRES.get(tipo_dte, f"DTE Tipo {tipo_dte}")
-    subject = f"{nombre_dte} #{numero_control[-6:]} — {emisor_nombre}"
+    if not GAS_URL:
+        logger.warning("Email no configurado: DTE_EMAIL_WEBHOOK_URL / EMAIL_SCRIPT_URL vacío")
+        return False
 
-    html = _build_html(
-        nombre_dte=nombre_dte,
-        emisor_nombre=emisor_nombre,
-        receptor_nombre=receptor_nombre,
-        numero_control=numero_control,
-        codigo_generacion=codigo_generacion,
-        sello_recepcion=sello_recepcion,
-        monto_total=monto_total,
-        fecha_emision=fecha_emision,
-    )
+    # --- Extraer datos completos del dte_json ---
+    identificacion = dte_json.get("identificacion", {})
+    emisor = dte_json.get("emisor", {})
+    receptor = dte_json.get("receptor", {})
+    resumen = dte_json.get("resumen", {})
+    cuerpo = dte_json.get("cuerpoDocumento", [])
+    ambiente = identificacion.get("ambiente", "01")
 
-    # Prepare JSON file
-    json_bytes = json.dumps(dte_json, ensure_ascii=False, indent=2).encode("utf-8")
+    # IVA total (varía según tipo DTE)
+    total_iva = 0
+    if tipo_dte == "03":
+        total_iva = resumen.get("totalIva", resumen.get("ivaPerci1", 0)) or 0
+    elif tipo_dte == "01":
+        gravada = resumen.get("totalGravada", 0) or 0
+        total_iva = round(gravada - gravada / 1.13, 2) if gravada else 0
+    else:
+        total_iva = resumen.get("totalIva", 0) or 0
+
+    # Items resumen para la tabla del email
+    items_resumen = []
+    if isinstance(cuerpo, list):
+        for item in cuerpo:
+            items_resumen.append({
+                "descripcion": item.get("descripcion", ""),
+                "cantidad": item.get("cantidad", 1),
+                "precio": item.get("precioUni", item.get("montoDescu", 0)),
+                "gravada": item.get("ventaGravada", item.get("compra", 0)) or 0,
+            })
+
+    # Nombre de archivos
     filename_base = f"DTE-{tipo_dte}-{numero_control.replace('/', '-')}"
 
+    # JSON del DTE como bytes
+    json_bytes = json.dumps(dte_json, ensure_ascii=False, indent=2).encode("utf-8")
+
+    # --- Payload en formato que espera el GAS elaborado ---
     payload = {
-        "to": receptor_email,
-        "subject": subject,
-        "html": html,
-        "attachments": [
-            {
-                "filename": f"{filename_base}.pdf",
-                "mimeType": "application/pdf",
-                "content": base64.b64encode(pdf_bytes).decode("ascii"),
-            },
-            {
-                "filename": f"{filename_base}.json",
-                "mimeType": "application/json",
-                "content": base64.b64encode(json_bytes).decode("ascii"),
-            },
-        ],
+        "api_key": GAS_API_KEY,
+        "receptor_email": receptor_email,
+        "receptor_nombre": receptor_nombre,
+        "emisor_nombre": emisor_nombre,
+        "emisor_nit": emisor.get("nit", ""),
+        "tipo_dte": tipo_dte,
+        "numero_control": numero_control,
+        "codigo_generacion": codigo_generacion,
+        "sello_recibido": sello_recepcion,
+        "fecha_emision": fecha_emision,
+        "hora_emision": identificacion.get("horEmi", ""),
+        "total_pagar": resumen.get("totalPagar", monto_total) or monto_total,
+        "total_letras": resumen.get("totalLetras", ""),
+        "total_gravada": resumen.get("totalGravada", 0) or 0,
+        "total_iva": total_iva,
+        "moneda": identificacion.get("tipoMoneda", "USD"),
+        "condicion_operacion": resumen.get("condicionOperacion", 1),
+        "items_resumen": items_resumen,
+        "ambiente": ambiente,
+        "pdf_base64": base64.b64encode(pdf_bytes).decode("ascii") if pdf_bytes else "",
+        "json_base64": base64.b64encode(json_bytes).decode("ascii"),
+        "pdf_filename": f"{filename_base}.pdf",
+        "json_filename": f"{filename_base}.json",
     }
 
     try:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            resp = await client.post(GOOGLE_SCRIPT_URL, json=payload)
+            resp = await client.post(
+                GAS_URL,
+                content=json.dumps(payload),
+                headers={"Content-Type": "text/plain"},
+                follow_redirects=True,
+            )
             result = resp.json()
             if result.get("success"):
                 logger.info(f"✅ Email enviado: {receptor_email} | DTE {codigo_generacion[:8]}")
@@ -89,77 +131,3 @@ async def send_dte_email(
     except Exception as e:
         logger.error(f"❌ Error enviando email: {e}")
         return False
-
-
-def _build_html(
-    nombre_dte: str, emisor_nombre: str, receptor_nombre: str,
-    numero_control: str, codigo_generacion: str, sello_recepcion: str,
-    monto_total: float, fecha_emision: str,
-) -> str:
-    return f"""
-    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
-        <div style="background:#1a3c5e;padding:20px;border-radius:8px 8px 0 0;text-align:center">
-            <h1 style="color:#fff;margin:0;font-size:20px">DOCUMENTO TRIBUTARIO ELECTRÓNICO</h1>
-            <p style="color:#8bb8e8;margin:5px 0 0;font-size:14px">{nombre_dte}</p>
-        </div>
-
-        <div style="background:#f8f9fa;padding:20px;border:1px solid #e0e0e0">
-            <p style="margin:0 0 15px;color:#333">Estimado/a <strong>{receptor_nombre}</strong>,</p>
-            <p style="margin:0 0 15px;color:#555;font-size:14px">
-                Le informamos que <strong>{emisor_nombre}</strong> ha emitido el siguiente
-                documento tributario electrónico a su nombre:
-            </p>
-
-            <table style="width:100%;border-collapse:collapse;margin:15px 0">
-                <tr style="background:#e8f0f8">
-                    <td style="padding:8px 12px;font-size:13px;color:#555;border:1px solid #d0d0d0"><strong>Tipo</strong></td>
-                    <td style="padding:8px 12px;font-size:13px;border:1px solid #d0d0d0">{nombre_dte}</td>
-                </tr>
-                <tr>
-                    <td style="padding:8px 12px;font-size:13px;color:#555;border:1px solid #d0d0d0"><strong>Nº Control</strong></td>
-                    <td style="padding:8px 12px;font-size:13px;font-family:monospace;border:1px solid #d0d0d0">{numero_control}</td>
-                </tr>
-                <tr style="background:#e8f0f8">
-                    <td style="padding:8px 12px;font-size:13px;color:#555;border:1px solid #d0d0d0"><strong>Código</strong></td>
-                    <td style="padding:8px 12px;font-size:13px;font-family:monospace;border:1px solid #d0d0d0">{codigo_generacion}</td>
-                </tr>
-                <tr>
-                    <td style="padding:8px 12px;font-size:13px;color:#555;border:1px solid #d0d0d0"><strong>Fecha</strong></td>
-                    <td style="padding:8px 12px;font-size:13px;border:1px solid #d0d0d0">{fecha_emision}</td>
-                </tr>
-                <tr style="background:#e8f0f8">
-                    <td style="padding:8px 12px;font-size:13px;color:#555;border:1px solid #d0d0d0"><strong>Total</strong></td>
-                    <td style="padding:8px 12px;font-size:15px;font-weight:bold;color:#1a3c5e;border:1px solid #d0d0d0">${monto_total:,.2f}</td>
-                </tr>
-            </table>
-
-            <div style="background:#e8f8e8;padding:10px;border-radius:4px;margin:15px 0;border-left:4px solid #27ae60">
-                <p style="margin:0;font-size:12px;color:#27ae60">
-                    <strong>✅ Validado por el Ministerio de Hacienda</strong><br>
-                    Sello: {sello_recepcion}
-                </p>
-            </div>
-
-            <p style="font-size:13px;color:#555;margin:15px 0 5px">
-                <strong>Archivos adjuntos:</strong>
-            </p>
-            <ul style="font-size:13px;color:#555;margin:0;padding-left:20px">
-                <li>📄 <strong>PDF</strong> — Representación gráfica del documento</li>
-                <li>📋 <strong>JSON</strong> — Documento tributario electrónico (formato oficial MH)</li>
-            </ul>
-
-            <p style="font-size:12px;color:#888;margin:20px 0 5px">
-                Puede verificar la autenticidad de este documento en:
-                <a href="https://admin.factura.gob.sv/consultaPublica" style="color:#2b6cb0">
-                    admin.factura.gob.sv/consultaPublica
-                </a>
-            </p>
-        </div>
-
-        <div style="background:#1a3c5e;padding:12px;border-radius:0 0 8px 8px;text-align:center">
-            <p style="color:#8bb8e8;margin:0;font-size:11px">
-                Generado por FACTURA-SV | Efficient AI Algorithms LLC | algoritmos.io
-            </p>
-        </div>
-    </div>
-    """
