@@ -2,8 +2,14 @@
 FACTURA-SV: Dependencias FastAPI
 =================================
 Inyección de dependencias para autenticación y servicios.
+
+ARQUITECTURA DE CLIENTS SUPABASE:
+- _auth_client: SOLO para validar JWT (auth.get_user). Nunca para queries.
+- get_supabase(): Client limpio para queries de datos. Nunca toca auth.
+Esto evita que auth.get_user() contamine el contexto del client de datos.
 """
 import os
+import logging
 from functools import lru_cache
 
 from typing import Optional
@@ -14,6 +20,8 @@ from supabase import create_client, Client as SupabaseClient
 from app.services.encryption_service import EncryptionService
 from app.services.dte_service import DTEService
 
+logger = logging.getLogger(__name__)
+
 # ── Security scheme ──
 security = HTTPBearer()
 
@@ -23,11 +31,20 @@ def _clean_env(key: str) -> str:
     return os.environ[key].strip().strip('"').strip("'")
 
 
-# ── Singletons ──
+# ── Supabase Clients ──
+
+@lru_cache()
+def _get_auth_client() -> SupabaseClient:
+    """Client dedicado SOLO para auth.get_user(). Nunca usar para queries."""
+    return create_client(
+        _clean_env("SUPABASE_URL"),
+        _clean_env("SUPABASE_SERVICE_ROLE_KEY"),
+    )
+
 
 @lru_cache()
 def get_supabase() -> SupabaseClient:
-    """Supabase client singleton (service role)."""
+    """Client limpio para queries de datos. Nunca toca auth.get_user()."""
     return create_client(
         _clean_env("SUPABASE_URL"),
         _clean_env("SUPABASE_SERVICE_ROLE_KEY"),
@@ -52,27 +69,27 @@ def get_dte_service(
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    supabase: SupabaseClient = Depends(get_supabase),
 ) -> dict:
     """
     Valida JWT de Supabase y retorna {user_id, org_id, email, role}.
-    Usado como Depends() en todos los endpoints protegidos.
+    Usa _auth_client dedicado para no contaminar el client de datos.
     """
     token = credentials.credentials
+    auth_client = _get_auth_client()
+    data_client = get_supabase()
 
     try:
-        # Verificar token con Supabase
-        user_response = supabase.auth.get_user(token)
+        user_response = auth_client.auth.get_user(token)
         user = user_response.user
-
         if not user:
             raise HTTPException(401, "Token inválido o expirado")
-
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(401, "Token inválido o expirado")
 
-    # Obtener org_id y role del usuario
-    result = supabase.table("users").select(
+    # Query con el client LIMPIO (no contaminado por auth)
+    result = data_client.table("users").select(
         "org_id, role, email, full_name"
     ).eq("id", user.id).single().execute()
 
@@ -92,12 +109,10 @@ async def get_current_user(
 
 async def get_current_user_or_api_key(
     request: Request,
-    supabase: SupabaseClient = Depends(get_supabase),
 ) -> dict:
     """
     Authenticate via JWT (web dashboard) or API key (integrators).
     Returns user dict with extra field 'auth_source': 'web' | 'api'.
-    API keys use header: Authorization: Bearer fsv_live_...
     """
     from app.services.api_key_service import validate_api_key
 
@@ -106,10 +121,11 @@ async def get_current_user_or_api_key(
         raise HTTPException(401, "Authorization header requerido")
 
     token = auth_header.replace("Bearer ", "").strip()
+    data_client = get_supabase()
 
     # Check if it's an API key (starts with fsv_live_)
     if token.startswith("fsv_live_"):
-        result = await validate_api_key(supabase, token)
+        result = await validate_api_key(data_client, token)
         if not result:
             raise HTTPException(401, "API key invalida o inactiva")
         return {
@@ -123,15 +139,18 @@ async def get_current_user_or_api_key(
         }
 
     # Otherwise, validate as JWT
+    auth_client = _get_auth_client()
     try:
-        user_response = supabase.auth.get_user(token)
+        user_response = auth_client.auth.get_user(token)
         user = user_response.user
         if not user:
             raise HTTPException(401, "Token invalido o expirado")
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(401, "Token invalido o expirado")
 
-    result = supabase.table("users").select(
+    result = data_client.table("users").select(
         "org_id, role, email, full_name"
     ).eq("id", user.id).single().execute()
 

@@ -259,23 +259,12 @@ async def list_receptores(
     q: str | None = Query(None, description="Buscar por nombre, NIT, NRC"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    supabase=Depends(get_supabase),
     user=Depends(get_current_user),
 ):
     """Lista receptores frecuentes con búsqueda. Ordenados por uso."""
-    import logging, os
-    from supabase import create_client
-    logger = logging.getLogger(__name__)
-    
-    # Fresh client to avoid auth context pollution from get_user()
-    fresh_sb = create_client(
-        os.environ["SUPABASE_URL"].strip().strip('"'),
-        os.environ["SUPABASE_SERVICE_ROLE_KEY"].strip().strip('"'),
-    )
-    
     org_id = user["org_id"]
-    logger.info(f"Buscando receptores: org={org_id}, q={q}")
-    
-    query = fresh_sb.table("receptores_frecuentes").select("*").eq(
+    query = supabase.table("receptores_frecuentes").select("*").eq(
         "org_id", org_id
     ).order("uso_count", desc=True).order("last_used_at", desc=True).limit(limit).offset(offset)
 
@@ -287,7 +276,6 @@ async def list_receptores(
             f"nombre_comercial.ilike.%{q}%"
         )
     result = query.execute()
-    logger.info(f"Receptores encontrados: {len(result.data or [])}")
     return {"receptores": result.data or [], "total": len(result.data or []), "limit": limit, "offset": offset}
 
 
