@@ -1550,11 +1550,11 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
 
     @router.get("/sucursales")
     async def list_sucursales(user=Depends(get_current_user)):
-        return await sucursal_service.list_sucursales(db, user["org_id"])
+        return await sucursal_service.list_sucursales(service.db, user["org_id"])
 
     @router.get("/sucursales/{sucursal_id}")
     async def get_sucursal(sucursal_id: str, user=Depends(get_current_user)):
-        suc = await sucursal_service.get_sucursal(db, user["org_id"], sucursal_id)
+        suc = await sucursal_service.get_sucursal(service.db, user["org_id"], sucursal_id)
         if not suc:
             raise HTTPException(404, "Sucursal no encontrada")
         return suc
@@ -1696,7 +1696,7 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         """Dashboard consolidado: stats de TODAS las orgs del usuario."""
         try:
             result = await contador_service.get_contador_dashboard(
-                db, user["user_id"]
+                service.db, user["user_id"]
             )
             return result
         except Exception as e:

@@ -82,7 +82,7 @@ async def accept_document(
     # Mark old acceptances for this doc as not current
     supabase.table("legal_acceptances") \
         .update({"is_current": False}) \
-        .eq("user_id", user["id"]) \
+        .eq("user_id", user["user_id"]) \
         .eq("document_id", body.document_id) \
         .eq("is_current", True) \
         .execute()
@@ -131,7 +131,7 @@ async def get_acceptance_status(
     """Get which legal documents the user has accepted."""
     result = supabase.table("legal_acceptances") \
         .select("document_id, document_version, document_title, accepted_at, verification_hash, signer_name") \
-        .eq("user_id", user["id"]) \
+        .eq("user_id", user["user_id"]) \
         .eq("is_current", True) \
         .execute()
 
@@ -177,7 +177,7 @@ async def get_audit_trail(
     """Get full audit history for a document."""
     result = supabase.table("legal_acceptances") \
         .select("*") \
-        .eq("user_id", user["id"]) \
+        .eq("user_id", user["user_id"]) \
         .eq("document_id", document_id) \
         .order("accepted_at", desc=True) \
         .limit(10) \
