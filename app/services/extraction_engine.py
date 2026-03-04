@@ -334,7 +334,7 @@ class ExtractionEngine:
 
         # Total
         total = re.search(
-            r"total\s*(?:a\s*pagar)?\s*:?\s*\$?\s*([\d,]+\.\d{2})",
+            r"(?<!sub-)(?<!sub )total\s*(?:a\s*pagar)?\s*:?\s*\$?\s*([\d,]+\.\d{2})",
             text,
             re.IGNORECASE,
         )

@@ -38,3 +38,4 @@ slowapi==0.1.9
 pytesseract
 pdf2image
 numpy
+openai
