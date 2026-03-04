@@ -1606,6 +1606,14 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         # ── Test 5: AI config ──
         results["ai_config"]["provider"] = engine.ai_provider or "NONE"
         results["ai_config"]["client_ready"] = engine.ai_client is not None
+        results["ai_config"]["DEEPSEEK_KEY_SET"] = bool(os.environ.get("DEEPSEEK_API_KEY"))
+        results["ai_config"]["OPENAI_KEY_SET"] = bool(os.environ.get("OPENAI_API_KEY"))
+        results["ai_config"]["ANTHROPIC_KEY_SET"] = bool(os.environ.get("ANTHROPIC_API_KEY"))
+        try:
+            from openai import OpenAI as _OAI
+            results["ai_config"]["openai_pkg"] = "OK"
+        except ImportError as ie:
+            results["ai_config"]["openai_pkg"] = f"MISSING: {ie}"
 
         # ── Test 6: Regex parser (simulated invoice text) ──
         try:
