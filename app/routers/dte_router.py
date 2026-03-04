@@ -1528,20 +1528,105 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
 
     @router.get("/import/test-extraction", tags=["Import/Export"])
     async def test_extraction():
-        """Test endpoint sin auth para verificar motor."""
+        """Test intensivo sin auth — JSON, XML, PDF deps, AI config."""
+        import json as json_lib, tempfile, os, xml.etree.ElementTree as ET_test
+        results = {"tests": [], "dependencies": {}, "ai_config": {}}
+
+        # ── Test 1: JSON MH completo ──
         try:
             engine = ExtractionEngine()
-            import json, tempfile, os
-            test_data = {"identificacion": {"tipoDte": "01", "fecEmi": "2026-02-20"}, "emisor": {"nit": "0614", "nombre": "TEST"}, "receptor": {"nombre": "REC"}, "resumen": {"totalPagar": 100}}
+            test_json = {
+                "identificacion": {"tipoDte": "03", "numeroControl": "DTE-03-00000001-000000000000001",
+                    "codigoGeneracion": "A1B2C3D4-E5F6-7890-ABCD-EF1234567890", "fecEmi": "2026-03-01"},
+                "emisor": {"nit": "06142812710151", "nombre": "EMPRESA DEMO S.A. DE C.V."},
+                "receptor": {"numDocumento": "06141212711033", "nombre": "CLIENTE PRUEBA S.A."},
+                "cuerpoDocumento": [
+                    {"numItem": 1, "descripcion": "Servicio DTE", "cantidad": 1, "precioUni": 100.00, "ventaGravada": 100.00},
+                    {"numItem": 2, "descripcion": "Soporte mensual", "cantidad": 2, "precioUni": 50.00, "ventaGravada": 100.00}
+                ],
+                "resumen": {"subTotal": 200.00, "totalIva": 26.00, "totalPagar": 226.00, "condicionOperacion": 1}
+            }
             tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w")
-            json.dump(test_data, tmp)
+            json_lib.dump(test_json, tmp)
             tmp.close()
-            result = engine.extract_from_file(tmp.name)
+            r = engine.extract_from_file(tmp.name)
             os.unlink(tmp.name)
-            return {"status": "ok", "result": result}
+            passed = r.get("total") == 226.0 and r.get("tipo_dte") == "03" and r.get("nit_emisor") == "06142812710151"
+            results["tests"].append({"name": "JSON MH completo", "status": "PASS" if passed else "FAIL", "result": r})
         except Exception as e:
-            import traceback
-            return {"status": "error", "error": str(e), "traceback": traceback.format_exc()}
+            results["tests"].append({"name": "JSON MH completo", "status": "ERROR", "error": str(e)})
+
+        # ── Test 2: XML ──
+        try:
+            xml_str = """<?xml version="1.0"?>
+<DTE><identificacion><tipoDte>01</tipoDte><fecEmi>2026-03-02</fecEmi><numeroControl>DTE-01-TEST</numeroControl></identificacion>
+<emisor><nit>06140101010101</nit><nombre>XML EMISOR SA</nombre></emisor>
+<receptor><numDocumento>06149999990001</numDocumento><nombre>XML RECEPTOR</nombre></receptor>
+<resumen><subTotal>500.00</subTotal><totalIva>65.00</totalIva><totalPagar>565.00</totalPagar></resumen></DTE>"""
+            tmp = tempfile.NamedTemporaryFile(suffix=".xml", delete=False, mode="w")
+            tmp.write(xml_str)
+            tmp.close()
+            r = engine.extract_from_file(tmp.name)
+            os.unlink(tmp.name)
+            passed = r.get("total") == "565.00" or r.get("total") == 565.0
+            results["tests"].append({"name": "XML DTE", "status": "PASS" if passed else "FAIL", "result": r})
+        except Exception as e:
+            results["tests"].append({"name": "XML DTE", "status": "ERROR", "error": str(e)})
+
+        # ── Test 3: PDF text extraction ──
+        try:
+            import pdfplumber
+            results["dependencies"]["pdfplumber"] = pdfplumber.__version__
+        except ImportError:
+            results["dependencies"]["pdfplumber"] = "NOT INSTALLED"
+
+        # ── Test 4: OCR deps ──
+        try:
+            import pytesseract
+            v = pytesseract.get_tesseract_version()
+            results["dependencies"]["tesseract"] = str(v)
+        except Exception as e:
+            results["dependencies"]["tesseract"] = f"ERROR: {e}"
+        try:
+            from PIL import Image
+            results["dependencies"]["Pillow"] = Image.__version__
+        except ImportError:
+            results["dependencies"]["Pillow"] = "NOT INSTALLED"
+        try:
+            from pdf2image import convert_from_path
+            results["dependencies"]["pdf2image"] = "OK"
+        except ImportError:
+            results["dependencies"]["pdf2image"] = "NOT INSTALLED"
+        try:
+            import numpy
+            results["dependencies"]["numpy"] = numpy.__version__
+        except ImportError:
+            results["dependencies"]["numpy"] = "NOT INSTALLED"
+
+        # ── Test 5: AI config ──
+        results["ai_config"]["provider"] = engine.ai_provider or "NONE"
+        results["ai_config"]["client_ready"] = engine.ai_client is not None
+
+        # ── Test 6: Regex parser (simulated invoice text) ──
+        try:
+            test_text = """CREDITO FISCAL
+NIT: 0614-121271-103-3
+Fecha: 15/02/2026
+Sub-Total: $1,250.00
+IVA 13%: $162.50
+Total a Pagar: $1,412.50"""
+            r = engine._parse_text_regex(test_text)
+            passed = r.get("total") == 1412.50 and r.get("tipo_dte") == "03" and r.get("nit_emisor") == "0614-121271-103-3"
+            results["tests"].append({"name": "Regex parser (CCF)", "status": "PASS" if passed else "FAIL", "result": r})
+        except Exception as e:
+            results["tests"].append({"name": "Regex parser (CCF)", "status": "ERROR", "error": str(e)})
+
+        # ── Summary ──
+        total = len(results["tests"])
+        passed = sum(1 for t in results["tests"] if t["status"] == "PASS")
+        results["summary"] = {"total": total, "passed": passed, "failed": total - passed}
+
+        return results
 
 
 
