@@ -315,7 +315,7 @@ class ExtractionEngine:
             data["numero_control"] = num.group(2) if num.group(2) else num.group(1)
 
         # Tipo DTE
-        if re.search(r"crédito fiscal|CCF", text, re.IGNORECASE):
+        if re.search(r"cr[eé]dito fiscal|CCF|CREDITO FISCAL", text, re.IGNORECASE):
             data["tipo_dte"] = "03"
         elif re.search(r"sujeto excluido", text, re.IGNORECASE):
             data["tipo_dte"] = "14"
