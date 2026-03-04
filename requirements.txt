@@ -35,3 +35,6 @@ httpx>=0.25.0
 
 # Rate limiting
 slowapi==0.1.9
+pytesseract
+pdf2image
+numpy

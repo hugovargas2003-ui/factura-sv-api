@@ -14,6 +14,13 @@ WORKDIR /app
 
 # cryptography tiene wheels precompilados para python:3.11-slim,
 # no se necesita gcc ni libffi-dev (ahorra ~150MB en imagen final).
+# System deps for OCR + PDF rendering
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    tesseract-ocr-spa \
+    poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir --only-binary :all: -r requirements.txt
 
