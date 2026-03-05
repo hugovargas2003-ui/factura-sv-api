@@ -40,7 +40,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # Railway asigna PORT dinámicamente; no se puede hardcodear.
 # --workers 4: escalado para manejar OCR concurrente sin bloquear requests.
 # --timeout-keep-alive 65: evita que Railway cierre conexiones antes que el proxy.
-CMD sh -c "uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --workers 4 --timeout-keep-alive 65"
+CMD sh -c "uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --workers ${WEB_WORKERS:-4} --timeout-keep-alive 65"
 # Sprint 1 - Fri Feb 20 19:17:24 CST 2026
 
 # cache-bust-1771638581
