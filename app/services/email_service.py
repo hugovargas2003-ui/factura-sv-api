@@ -3,11 +3,19 @@ FACTURA-SV: Servicio de Email via Google Apps Script
 =====================================================
 Envía DTE (PDF + JSON) al receptor automáticamente tras emisión.
 Usa el GAS elaborado que genera HTML profesional con QR, items, totales.
+
+Custom SMTP: Si la org tiene SMTP propio configurado y verificado,
+se envía desde su correo. Si no, fallback a GAS de plataforma.
 """
 import base64
 import json
 import logging
 import os
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -29,6 +37,81 @@ DTE_NOMBRES = {
 }
 
 
+async def _send_via_custom_smtp(
+    smtp_config: dict,
+    receptor_email: str,
+    receptor_nombre: str,
+    emisor_nombre: str,
+    tipo_dte: str,
+    numero_control: str,
+    codigo_generacion: str,
+    monto_total: float,
+    fecha_emision: str,
+    pdf_bytes: bytes | None,
+    dte_json: dict,
+) -> bool:
+    """Send DTE email using org's custom SMTP server."""
+    try:
+        from app.services.encryption_service import EncryptionService
+        enc = EncryptionService()
+        org_id = smtp_config["org_id"]
+        password = enc.decrypt_string(
+            smtp_config["smtp_password_encrypted"].encode("utf-8"), org_id
+        )
+
+        tipo_nombre = DTE_NOMBRES.get(tipo_dte, tipo_dte)
+        from_name = smtp_config.get("from_name") or emisor_nombre
+        from_email = smtp_config.get("from_email") or smtp_config["smtp_user"]
+
+        msg = MIMEMultipart()
+        msg["Subject"] = f"{tipo_nombre} {numero_control} — {emisor_nombre}"
+        msg["From"] = f"{from_name} <{from_email}>"
+        msg["To"] = receptor_email
+
+        body_text = (
+            f"Estimado/a {receptor_nombre},\n\n"
+            f"Se adjunta su {tipo_nombre} electrónico.\n\n"
+            f"Número de control: {numero_control}\n"
+            f"Código de generación: {codigo_generacion}\n"
+            f"Fecha: {fecha_emision}\n"
+            f"Total: ${monto_total:.2f}\n\n"
+            f"Puede verificar este documento en:\n"
+            f"https://admin.factura.gob.sv/consultaPublica\n\n"
+            f"— {from_name}\n"
+            f"Emitido vía FACTURA-SV"
+        )
+        msg.attach(MIMEText(body_text, "plain", "utf-8"))
+
+        filename_base = f"DTE-{tipo_dte}-{numero_control.replace('/', '-')}"
+
+        if pdf_bytes:
+            pdf_part = MIMEBase("application", "pdf")
+            pdf_part.set_payload(pdf_bytes)
+            encoders.encode_base64(pdf_part)
+            pdf_part.add_header("Content-Disposition", "attachment", filename=f"{filename_base}.pdf")
+            msg.attach(pdf_part)
+
+        json_bytes = json.dumps(dte_json, ensure_ascii=False, indent=2).encode("utf-8")
+        json_part = MIMEBase("application", "json")
+        json_part.set_payload(json_bytes)
+        encoders.encode_base64(json_part)
+        json_part.add_header("Content-Disposition", "attachment", filename=f"{filename_base}.json")
+        msg.attach(json_part)
+
+        server = smtplib.SMTP(smtp_config["smtp_host"], smtp_config["smtp_port"], timeout=15)
+        if smtp_config.get("use_tls", True):
+            server.starttls()
+        server.login(smtp_config["smtp_user"], password)
+        server.send_message(msg)
+        server.quit()
+
+        logger.info(f"Custom SMTP email sent: {receptor_email} | DTE {codigo_generacion[:8]} via {from_email}")
+        return True
+    except Exception as e:
+        logger.error(f"Custom SMTP failed for org {smtp_config.get('org_id', '?')}: {e}")
+        return False
+
+
 async def send_dte_email(
     receptor_email: str,
     receptor_nombre: str,
@@ -41,12 +124,39 @@ async def send_dte_email(
     fecha_emision: str,
     pdf_bytes: bytes,
     dte_json: dict,
+    org_id: str | None = None,
 ) -> bool:
-    """Envía PDF + JSON del DTE al receptor via Google Apps Script."""
+    """Envía PDF + JSON del DTE al receptor via Google Apps Script o SMTP custom."""
     if not receptor_email:
         logger.warning(f"DTE {codigo_generacion[:8]}: sin email de receptor")
         return False
 
+    # Check for custom SMTP config
+    if org_id:
+        try:
+            from app.dependencies import get_supabase
+            db = get_supabase()
+            smtp_result = db.table("org_email_config").select("*").eq(
+                "org_id", org_id
+            ).eq("use_custom_email", True).eq("is_verified", True).limit(1).execute()
+            if smtp_result.data:
+                return await _send_via_custom_smtp(
+                    smtp_config=smtp_result.data[0],
+                    receptor_email=receptor_email,
+                    receptor_nombre=receptor_nombre,
+                    emisor_nombre=emisor_nombre,
+                    tipo_dte=tipo_dte,
+                    numero_control=numero_control,
+                    codigo_generacion=codigo_generacion,
+                    monto_total=monto_total,
+                    fecha_emision=fecha_emision,
+                    pdf_bytes=pdf_bytes,
+                    dte_json=dte_json,
+                )
+        except Exception as e:
+            logger.warning(f"Custom SMTP lookup failed, falling back to GAS: {e}")
+
+    # Fallback: platform GAS email
     if not GAS_URL:
         logger.warning("Email no configurado: DTE_EMAIL_WEBHOOK_URL / EMAIL_SCRIPT_URL vacío")
         return False

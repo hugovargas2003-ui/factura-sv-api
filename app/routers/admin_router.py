@@ -1475,3 +1475,56 @@ async def get_dte_metrics(
         "api_orgs": api_org_list,
         "by_type": by_type,
     }
+
+
+# ═══════════════════════════════════════════
+# ADMIN: ORG EMAIL CONFIG
+# ═══════════════════════════════════════════
+
+@router.get("/organizations/{org_id}/email-config")
+async def admin_get_email_config(
+    org_id: str,
+    admin: dict = Depends(require_admin),
+    db: SupabaseClient = Depends(get_supabase),
+):
+    """Read email config for any org (admin only)."""
+    result = db.table("org_email_config").select("*").eq("org_id", org_id).limit(1).execute()
+    if not result.data:
+        return {"use_custom_email": False, "configured": False, "org_id": org_id}
+    config = result.data[0]
+    config.pop("smtp_password_encrypted", None)
+    config["has_password"] = True
+    return config
+
+
+@router.put("/organizations/{org_id}/email-config")
+async def admin_update_email_config(
+    org_id: str,
+    body: dict,
+    admin: dict = Depends(require_admin),
+    db: SupabaseClient = Depends(get_supabase),
+):
+    """Update email config for any org (admin only)."""
+    from app.services.encryption_service import EncryptionService
+    enc = EncryptionService()
+
+    data = {
+        "org_id": org_id,
+        "use_custom_email": body.get("use_custom_email", False),
+        "smtp_host": (body.get("smtp_host") or "").strip() or None,
+        "smtp_port": body.get("smtp_port", 587),
+        "smtp_user": (body.get("smtp_user") or "").strip() or None,
+        "from_name": (body.get("from_name") or "").strip() or None,
+        "from_email": (body.get("from_email") or "").strip() or None,
+        "use_tls": body.get("use_tls", True),
+        "is_verified": False,
+        "updated_at": "now()",
+    }
+
+    if body.get("smtp_password"):
+        data["smtp_password_encrypted"] = enc.encrypt_string(
+            body["smtp_password"], org_id
+        ).decode("utf-8")
+
+    db.table("org_email_config").upsert(data, on_conflict="org_id").execute()
+    return {"status": "ok", "message": "Email config actualizada"}
