@@ -17,6 +17,7 @@ Architecture:
 """
 
 import logging
+import os
 import uuid
 import asyncio
 from contextlib import asynccontextmanager
@@ -180,6 +181,7 @@ _cors_origins = ["*"] if settings.debug else [
     "https://factura-sv.algoritmos.io",
     "https://algoritmos.io",
     "https://factura-sv-production-70de.up.railway.app",
+    "https://factura-sv-api-failover.fly.dev",
 ]
 
 app.add_middleware(
@@ -263,14 +265,21 @@ async def invalidation_error_handler(request: Request, exc: InvalidationError):
 # HEALTH CHECK
 # ─────────────────────────────────────────────────────────────
 
-@app.get("/health", response_model=HealthResponse, tags=["Sistema"])
+APP_ENVIRONMENT = os.environ.get("APP_ENVIRONMENT", "production")
+
+@app.get("/health", tags=["Sistema"])
 async def health_check():
     """Verificar estado del servicio."""
+    from app.services.circuit_breaker import mh_breaker
     return {
         "status": "ok",
         "version": settings.app_version,
         "environment": settings.mh_environment.value,
+        "app_environment": APP_ENVIRONMENT,
         "mh_auth_url": get_mh_url("auth"),
+        "workers": 4,
+        "failover": "fly.io standby",
+        "circuit_breaker": mh_breaker.get_status(),
     }
 
 

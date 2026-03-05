@@ -42,6 +42,7 @@ from datetime import datetime, timezone
 from app.core.config import get_mh_url, settings, MHEnvironment
 from app.modules.auth_bridge import TokenInfo
 from app.schemas.models import TransmitResponse
+from app.services.circuit_breaker import mh_breaker
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +148,12 @@ class TransmitService:
             f"env={ambiente}, version={version}"
         )
 
+        if not mh_breaker.can_request():
+            raise TransmitError(
+                message="Circuit breaker OPEN: MH no disponible. DTE enviado a contingencia.",
+                status_code=503,
+            )
+
         last_error = None
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
@@ -162,7 +169,9 @@ class TransmitService:
                 except Exception:
                     logger.info(f"MH Response: status={response.status_code}, text={response.text[:500]}")
 
-                return self._parse_response(response, codigo_generacion)
+                result = self._parse_response(response, codigo_generacion)
+                mh_breaker.record_success()
+                return result
 
             except TransmitError:
                 raise  # Don't retry business logic errors
@@ -197,6 +206,7 @@ class TransmitService:
                 await asyncio.sleep(delay)
 
         # All retries exhausted
+        mh_breaker.record_failure()
         raise last_error
 
     def _parse_response(self, response: httpx.Response, codigo_generacion: str) -> TransmitResponse:
