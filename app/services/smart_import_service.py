@@ -298,6 +298,18 @@ def _clean_departamento(value: str) -> str:
     return value
 
 
+def _clean_municipio(value: str, depto_code: str = "") -> str:
+    """Normaliza municipio a código MH de 2 dígitos."""
+    v = value.strip()
+    digits = re.sub(r"[^0-9]", "", v)
+    if digits and len(digits) <= 2:
+        return digits.zfill(2)
+    if digits and len(digits) > 2:
+        return digits[:2]
+    # Text value — can't map without full catalog, use safe default
+    return "14"
+
+
 # ═══════════════════════════════════════════════════════════
 # FILE PARSER
 # ═══════════════════════════════════════════════════════════
@@ -361,8 +373,8 @@ def apply_mapping(rows: list[dict], mapping: dict[str, str], import_type: str) -
             elif target_field == "departamento":
                 mapped[target_field] = _clean_departamento(raw_value)
             elif target_field == "municipio":
-                digits = re.sub(r"[^0-9]", "", raw_value)
-                mapped[target_field] = digits if digits else raw_value
+                depto = mapped.get("departamento", "")
+                mapped[target_field] = _clean_municipio(raw_value, depto)
             else:
                 mapped[target_field] = raw_value
         mapped_rows.append(mapped)
