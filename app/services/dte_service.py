@@ -304,6 +304,13 @@ class DTEService:
             except Exception as e:
                 logger.warning(f"Auto-save receptor failed: {e}")
 
+        # 9d. Auto-guardar productos/servicios en catálogo
+        if estado == "procesado" and items:
+            try:
+                await self._autosave_productos(org_id, items)
+            except Exception as e:
+                logger.warning(f"Auto-save productos failed: {e}")
+
         # 10. Deducir inventario automaticamente (solo DTEs que mueven mercaderia)
         if estado == "procesado" and tipo_dte in ("01", "03", "11", "14"):
             try:
@@ -803,6 +810,68 @@ class DTEService:
             }).execute()
 
         logger.info(f"Receptor auto-saved: {num_doc} for org={org_id}")
+
+    async def _autosave_productos(self, org_id: str, items: list[dict]):
+        """Auto-save products/services to catalog after successful DTE emission."""
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Fetch existing product descriptions for this org to avoid duplicates
+        existing = self.db.table("dte_productos").select(
+            "id, descripcion, codigo, uso_count"
+        ).eq("org_id", org_id).execute()
+
+        existing_by_desc = {}
+        existing_by_code = {}
+        for p in (existing.data or []):
+            existing_by_desc[p["descripcion"].strip().lower()] = p
+            if p.get("codigo"):
+                existing_by_code[p["codigo"].strip().lower()] = p
+
+        for item in items:
+            descripcion = (item.get("descripcion") or "").strip()
+            if not descripcion:
+                continue
+
+            codigo = (item.get("codigo") or "").strip()
+            precio = item.get("precioUni") or item.get("precio_unitario") or 0
+            tipo_item = item.get("tipoItem") or item.get("tipo_item") or 2
+            unidad = item.get("uniMedida") or item.get("unidad_medida") or 59
+
+            # Match by codigo first, then by description
+            match = None
+            if codigo and codigo.lower() in existing_by_code:
+                match = existing_by_code[codigo.lower()]
+            elif descripcion.lower() in existing_by_desc:
+                match = existing_by_desc[descripcion.lower()]
+
+            if match:
+                # Update uso_count
+                self.db.table("dte_productos").update({
+                    "uso_count": (match.get("uso_count") or 0) + 1,
+                    "updated_at": now,
+                }).eq("id", match["id"]).execute()
+            else:
+                record = {
+                    "org_id": org_id,
+                    "codigo": codigo or None,
+                    "descripcion": descripcion,
+                    "precio_unitario": float(precio),
+                    "tipo_item": int(tipo_item),
+                    "unidad_medida": int(unidad),
+                    "tipo_venta": "gravada",
+                    "uso_count": 1,
+                    "is_active": True,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                self.db.table("dte_productos").insert(record).execute()
+                # Add to local cache to avoid duplicate inserts within same DTE
+                existing_by_desc[descripcion.lower()] = {"id": "new", "uso_count": 1}
+                if codigo:
+                    existing_by_code[codigo.lower()] = {"id": "new", "uso_count": 1}
+
+        logger.info(f"Productos auto-saved: {len(items)} items for org={org_id}")
 
     @staticmethod
     def _creds_to_emisor(creds: dict) -> dict:
