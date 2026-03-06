@@ -814,3 +814,6 @@ from app.routers.legal_router import router as legal_router
 from app.routers.catalog_router import router as catalog_router
 app.include_router(legal_router)
 app.include_router(catalog_router, prefix="/api/v1")
+
+from app.routers.fiscal_id_router import router as fiscal_id_router
+app.include_router(fiscal_id_router)
