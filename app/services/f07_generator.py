@@ -133,7 +133,7 @@ async def _fetch_dtes_con_json(
         )
         .eq("org_id", org_id)
         .in_("tipo_dte", tipos)
-        .eq("estado", "PROCESADO")
+        .eq("estado", "procesado")
         .gte("fecha_emision", date_from)
         .lte("fecha_emision", date_to)
         .order("fecha_emision")

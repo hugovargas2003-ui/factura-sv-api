@@ -40,7 +40,7 @@ async def get_cxc_list(
             count="exact",
         )
         .eq("org_id", org_id)
-        .eq("estado", "PROCESADO")
+        .eq("estado", "procesado")
         .order("fecha_vencimiento", desc=False)
     )
 
@@ -141,7 +141,7 @@ async def get_aging_report(supabase: Any, org_id: str) -> dict:
         "receptor_nombre, receptor_nit, "
         "monto_total, monto_pagado, fecha_vencimiento, estado_pago"
     ).eq("org_id", org_id).eq(
-        "estado", "PROCESADO"
+        "estado", "procesado"
     ).in_("estado_pago", ["pendiente", "parcial"]).execute()
 
     rows = result.data or []
@@ -212,7 +212,7 @@ async def get_cxc_stats(supabase: Any, org_id: str) -> dict:
     """Dashboard stats for CxC."""
     result = supabase.table("dtes").select(
         "estado_pago, monto_total, monto_pagado"
-    ).eq("org_id", org_id).eq("estado", "PROCESADO").execute()
+    ).eq("org_id", org_id).eq("estado", "procesado").execute()
 
     rows = result.data or []
 

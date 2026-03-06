@@ -43,7 +43,7 @@ async def _fetch_dtes_by_type(
         "iva, monto_total, sello_recibido, estado"
     ).eq("org_id", org_id).eq(
         "tipo_dte", tipo_dte
-    ).eq("estado", "PROCESADO").gte(
+    ).eq("estado", "procesado").gte(
         "fecha_emision", date_from
     ).lt(
         "fecha_emision", date_to
@@ -147,7 +147,7 @@ async def generate_resumen_iva(
     result = supabase.table("dtes").select(
         "tipo_dte, total_gravada, total_exenta, total_no_sujeta, iva, monto_total"
     ).eq("org_id", org_id).eq(
-        "estado", "PROCESADO"
+        "estado", "procesado"
     ).gte("fecha_emision", date_from).lt("fecha_emision", date_to).execute()
 
     rows = result.data or []

@@ -15,7 +15,7 @@ async def get_ventas_diarias(db: SupabaseClient, org_id: str, dias: int = 30):
     desde = (date.today() - timedelta(days=dias)).isoformat()
     result = db.table("dtes").select(
         "fecha_emision, monto_total, tipo_dte"
-    ).eq("org_id", org_id).eq("estado", "PROCESADO").gte(
+    ).eq("org_id", org_id).eq("estado", "procesado").gte(
         "fecha_emision", desde
     ).order("fecha_emision").execute()
 
@@ -48,7 +48,7 @@ async def get_top_clientes(db: SupabaseClient, org_id: str, limit: int = 10):
     """Top clientes por monto total facturado."""
     result = db.table("dtes").select(
         "receptor_nombre, receptor_nit, monto_total"
-    ).eq("org_id", org_id).eq("estado", "PROCESADO").execute()
+    ).eq("org_id", org_id).eq("estado", "procesado").execute()
 
     clientes = {}
     for r in (result.data or []):
@@ -63,11 +63,24 @@ async def get_top_clientes(db: SupabaseClient, org_id: str, limit: int = 10):
 
 
 async def get_top_productos(db: SupabaseClient, org_id: str, limit: int = 10):
-    """Top productos por cantidad vendida y monto."""
+    """Top productos por uso y monto estimado (uso_count * precio_unitario)."""
     result = db.table("dte_productos").select(
-        "descripcion, codigo, cantidad_total, monto_total"
-    ).eq("org_id", org_id).order("monto_total", desc=True).limit(limit).execute()
-    return result.data or []
+        "descripcion, codigo, uso_count, precio_unitario"
+    ).eq("org_id", org_id).eq("is_active", True).order(
+        "uso_count", desc=True
+    ).limit(limit).execute()
+
+    productos = []
+    for p in (result.data or []):
+        uso = p.get("uso_count") or 0
+        precio = float(p.get("precio_unitario") or 0)
+        productos.append({
+            "descripcion": p.get("descripcion", ""),
+            "codigo": p.get("codigo", ""),
+            "cantidad_total": uso,
+            "monto_total": round(uso * precio, 2),
+        })
+    return productos
 
 
 async def get_dashboard_advanced(db: SupabaseClient, org_id: str, dias: int = 30):
