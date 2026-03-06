@@ -57,7 +57,7 @@ async def accept_document(
     ua = request.headers.get("user-agent", "unknown")
 
     audit_data = {
-        "user_id": user["id"],
+        "user_id": user["user_id"],
         "document_id": body.document_id,
         "document_version": body.document_version,
         "accepted_at": now,
@@ -88,7 +88,7 @@ async def accept_document(
         .execute()
 
     result = supabase.table("legal_acceptances").insert({
-        "user_id": user["id"],
+        "user_id": user["user_id"],
         "organization_id": body.organization_id,
         "document_id": body.document_id,
         "document_version": body.document_version,
