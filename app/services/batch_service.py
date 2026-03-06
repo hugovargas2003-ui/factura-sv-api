@@ -13,15 +13,18 @@ Flow:
 
 import csv
 import io
+import re
+import unicodedata
 import uuid
 from datetime import datetime
+from difflib import SequenceMatcher
 from typing import Any, Optional
 
 import openpyxl
 
 
 # ---------------------------------------------------------------------------
-# CSV/XLSX Parser
+# CSV/XLSX Parser with fuzzy column matching
 # ---------------------------------------------------------------------------
 
 REQUIRED_COLUMNS = {
@@ -37,9 +40,129 @@ OPTIONAL_COLUMNS = {
     "condicion_operacion", "observaciones",
 }
 
+ALL_COLUMNS = REQUIRED_COLUMNS | OPTIONAL_COLUMNS
+
+# Aliases: common header variations → canonical field name
+_COLUMN_ALIASES: dict[str, str] = {
+    # tipo_dte
+    "tipo": "tipo_dte", "tipo dte": "tipo_dte", "tipo_documento": "tipo_dte",
+    "tipo documento": "tipo_dte", "doc type": "tipo_dte",
+    # receptor
+    "tipo doc receptor": "receptor_tipo_doc", "tipo_doc": "receptor_tipo_doc",
+    "tipo doc": "receptor_tipo_doc", "tipo_documento_receptor": "receptor_tipo_doc",
+    "nit": "receptor_num_doc", "dui": "receptor_num_doc", "documento": "receptor_num_doc",
+    "num_doc": "receptor_num_doc", "num doc": "receptor_num_doc",
+    "numero documento": "receptor_num_doc", "numero_documento": "receptor_num_doc",
+    "nit/dui": "receptor_num_doc", "nit_dui": "receptor_num_doc",
+    "nombre": "receptor_nombre", "razon social": "receptor_nombre",
+    "razon_social": "receptor_nombre", "cliente": "receptor_nombre",
+    "nombre cliente": "receptor_nombre", "nombre_cliente": "receptor_nombre",
+    "receptor": "receptor_nombre",
+    "nrc": "receptor_nrc", "registro comercio": "receptor_nrc",
+    "cod actividad": "receptor_cod_actividad", "actividad": "receptor_cod_actividad",
+    "codigo actividad": "receptor_cod_actividad",
+    "desc actividad": "receptor_desc_actividad",
+    "descripcion actividad": "receptor_desc_actividad",
+    "departamento": "receptor_departamento", "depto": "receptor_departamento",
+    "municipio": "receptor_municipio",
+    "direccion": "receptor_complemento", "complemento": "receptor_complemento",
+    "telefono": "receptor_telefono", "tel": "receptor_telefono", "phone": "receptor_telefono",
+    "correo": "receptor_correo", "email": "receptor_correo", "e-mail": "receptor_correo",
+    # items
+    "descripcion": "item_descripcion", "producto": "item_descripcion",
+    "servicio": "item_descripcion", "detalle": "item_descripcion",
+    "nombre producto": "item_descripcion", "nombre_producto": "item_descripcion",
+    "precio": "item_precio", "precio unitario": "item_precio",
+    "precio_unitario": "item_precio", "monto": "item_precio",
+    "valor": "item_precio", "price": "item_precio",
+    "cantidad": "item_cantidad", "qty": "item_cantidad", "cant": "item_cantidad",
+    "unidades": "item_cantidad",
+    "tipo item": "item_tipo", "tipo_item": "item_tipo",
+    "unidad medida": "item_unidad_medida", "unidad_medida": "item_unidad_medida",
+    "unidad": "item_unidad_medida",
+    "codigo": "item_codigo", "sku": "item_codigo", "code": "item_codigo",
+    "codigo producto": "item_codigo", "codigo_producto": "item_codigo",
+    # other
+    "condicion": "condicion_operacion", "condicion operacion": "condicion_operacion",
+    "obs": "observaciones", "notas": "observaciones", "nota": "observaciones",
+}
+
+
+def _normalize_header(h: str) -> str:
+    """Normalize header for matching: lowercase, strip accents, collapse separators."""
+    h = h.strip().lower()
+    # Remove accents
+    h = "".join(
+        c for c in unicodedata.normalize("NFD", h) if unicodedata.category(c) != "Mn"
+    )
+    # Collapse separators to single space
+    h = re.sub(r"[_\-./]+", " ", h).strip()
+    return h
+
+
+def _match_column(header: str) -> Optional[str]:
+    """Match a CSV header to a canonical field name using aliases + fuzzy matching."""
+    norm = _normalize_header(header)
+
+    # Exact match on canonical name
+    canon = norm.replace(" ", "_")
+    if canon in ALL_COLUMNS:
+        return canon
+
+    # Alias match
+    if norm in _COLUMN_ALIASES:
+        return _COLUMN_ALIASES[norm]
+
+    # Fuzzy match against aliases (threshold 0.75)
+    best_score = 0.0
+    best_field = None
+    for alias, field in _COLUMN_ALIASES.items():
+        score = SequenceMatcher(None, norm, alias).ratio()
+        if score > best_score:
+            best_score = score
+            best_field = field
+    # Also fuzzy against canonical names
+    for col in ALL_COLUMNS:
+        score = SequenceMatcher(None, norm, col.replace("_", " ")).ratio()
+        if score > best_score:
+            best_score = score
+            best_field = col
+
+    if best_score >= 0.75 and best_field:
+        return best_field
+
+    return None
+
+
+def _remap_headers(raw_headers: list[str]) -> dict[str, str]:
+    """Map raw CSV/XLSX headers to canonical field names. Returns {raw_header: canonical}."""
+    mapping: dict[str, str] = {}
+    used: set[str] = set()
+    for h in raw_headers:
+        field = _match_column(h)
+        if field and field not in used:
+            mapping[h] = field
+            used.add(field)
+    return mapping
+
+
+def _remap_rows(rows: list[dict], header_map: dict[str, str]) -> list[dict]:
+    """Remap row keys from raw headers to canonical field names."""
+    result = []
+    for row in rows:
+        new_row = {}
+        for raw_key, value in row.items():
+            canon = header_map.get(raw_key)
+            if canon:
+                new_row[canon] = value
+            else:
+                new_row[raw_key] = value
+        result.append(new_row)
+    return result
+
 
 def parse_batch_file(content: bytes, filename: str) -> tuple[list[dict], Optional[str]]:
-    """Parse CSV/XLSX into list of row dicts. Returns (rows, error)."""
+    """Parse CSV/XLSX into list of row dicts with fuzzy column matching. Returns (rows, error)."""
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
     if ext == "csv":
@@ -52,6 +175,12 @@ def parse_batch_file(content: bytes, filename: str) -> tuple[list[dict], Optiona
             {k.strip().lower(): (v.strip() if v else "") for k, v in row.items() if k}
             for row in reader
         ]
+        # Fuzzy remap headers
+        if rows:
+            raw_headers = list(rows[0].keys())
+            header_map = _remap_headers(raw_headers)
+            if header_map:
+                rows = _remap_rows(rows, header_map)
         return rows, None
 
     if ext in ("xlsx", "xls"):
@@ -68,15 +197,18 @@ def parse_batch_file(content: bytes, filename: str) -> tuple[list[dict], Optiona
         if len(raw) < 2:
             return [], "Archivo sin datos"
 
-        headers = [str(h).strip().lower() for h in raw[0] if h]
+        raw_headers = [str(h).strip() for h in raw[0] if h]
+        header_map = _remap_headers(raw_headers)
+        # Build rows using canonical names where possible
         rows = []
         for r in raw[1:]:
             if not any(r):
                 continue
             row = {}
-            for i, h in enumerate(headers):
+            for i, h in enumerate(raw_headers):
                 val = r[i] if i < len(r) else None
-                row[h] = str(val).strip() if val is not None else ""
+                canon = header_map.get(h, h.strip().lower())
+                row[canon] = str(val).strip() if val is not None else ""
             rows.append(row)
         return rows, None
 
@@ -115,13 +247,19 @@ def _row_to_emit_params(row: dict, row_num: int) -> tuple[Optional[dict], Option
     try:
         item_precio = float(item_precio_str)
     except ValueError:
-        errors.append(f"item_precio inválido: {item_precio_str}")
+        errors.append(
+            f"item_precio no es número: '{item_precio_str}'. "
+            "Verifique que las columnas estén en el orden correcto."
+        )
         item_precio = 0
 
     try:
         item_cantidad = float(item_cant_str)
     except ValueError:
-        errors.append(f"item_cantidad inválida: {item_cant_str}")
+        errors.append(
+            f"item_cantidad no es número: '{item_cant_str}'. "
+            "Verifique que las columnas estén en el orden correcto."
+        )
         item_cantidad = 1
 
     if errors:
