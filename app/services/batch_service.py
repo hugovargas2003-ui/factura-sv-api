@@ -216,6 +216,114 @@ def parse_batch_file(content: bytes, filename: str) -> tuple[list[dict], Optiona
 
 
 # ---------------------------------------------------------------------------
+# Auto-sanitize row data (same normalizations as smart_import)
+# ---------------------------------------------------------------------------
+
+_TIPO_DTE_MAP = {
+    "factura": "01", "consumidor final": "01", "consumidor": "01",
+    "ccf": "03", "credito fiscal": "03", "comprobante credito fiscal": "03",
+    "nota credito": "05", "nota de credito": "05", "nc": "05",
+    "nota debito": "06", "nota de debito": "06", "nd": "06",
+    "retencion": "07", "comprobante retencion": "07",
+    "exportacion": "11", "factura exportacion": "11",
+    "sujeto excluido": "14", "factura sujeto excluido": "14", "fse": "14",
+    "donacion": "15",
+}
+
+_CONDICION_MAP = {
+    "contado": "1", "efectivo": "1", "cash": "1",
+    "credito": "2", "credit": "2",
+    "otro": "3", "other": "3",
+}
+
+
+def _sanitize_batch_row(row: dict) -> tuple[dict, list[dict]]:
+    """Normalize batch row data to MH format. Returns (sanitized_row, list_of_fixes)."""
+    from app.services.smart_import_service import (
+        _clean_nit, _clean_precio, _clean_departamento, _clean_municipio,
+        _infer_tipo_item, _infer_unidad_medida,
+    )
+    fixes = []
+
+    def _fix(field: str, original: str, fixed: str):
+        if original != fixed:
+            fixes.append({"field": field, "original": original, "fixed": fixed})
+
+    # tipo_dte: name → code
+    td = row.get("tipo_dte", "").strip()
+    if td and not td.isdigit():
+        new_td = _TIPO_DTE_MAP.get(td.lower(), td)
+        _fix("tipo_dte", td, new_td)
+        row["tipo_dte"] = new_td
+
+    # receptor_num_doc: strip dashes/spaces
+    rnd = row.get("receptor_num_doc", "").strip()
+    if rnd:
+        cleaned = _clean_nit(rnd)
+        _fix("receptor_num_doc", rnd, cleaned)
+        row["receptor_num_doc"] = cleaned
+
+    # receptor_nrc: strip dashes
+    nrc = row.get("receptor_nrc", "").strip()
+    if nrc:
+        cleaned = _clean_nit(nrc)
+        _fix("receptor_nrc", nrc, cleaned)
+        row["receptor_nrc"] = cleaned
+
+    # receptor_departamento: name → code
+    dep = row.get("receptor_departamento", "").strip()
+    if dep:
+        cleaned = _clean_departamento(dep)
+        _fix("receptor_departamento", dep, cleaned)
+        row["receptor_departamento"] = cleaned
+
+    # receptor_municipio: name → code
+    mun = row.get("receptor_municipio", "").strip()
+    if mun:
+        cleaned = _clean_municipio(mun)
+        _fix("receptor_municipio", mun, cleaned)
+        row["receptor_municipio"] = cleaned
+
+    # item_precio: strip $, commas, European format
+    precio = row.get("item_precio", "").strip()
+    if precio:
+        cleaned_val = _clean_precio(precio)
+        cleaned_str = str(cleaned_val)
+        _fix("item_precio", precio, cleaned_str)
+        row["item_precio"] = cleaned_str
+
+    # item_cantidad: strip non-numeric except dot
+    cant = row.get("item_cantidad", "").strip()
+    if cant:
+        cleaned = re.sub(r"[^\d.]", "", cant) or cant
+        _fix("item_cantidad", cant, cleaned)
+        row["item_cantidad"] = cleaned
+
+    # item_tipo: text → code
+    it = row.get("item_tipo", "").strip()
+    if it and not it.isdigit():
+        cleaned = str(_infer_tipo_item(it))
+        _fix("item_tipo", it, cleaned)
+        row["item_tipo"] = cleaned
+
+    # item_unidad_medida: text → code
+    um = row.get("item_unidad_medida", "").strip()
+    if um and not um.isdigit():
+        cleaned = str(_infer_unidad_medida(um))
+        _fix("item_unidad_medida", um, cleaned)
+        row["item_unidad_medida"] = cleaned
+
+    # condicion_operacion: text → code
+    co = row.get("condicion_operacion", "").strip()
+    if co and not co.isdigit():
+        cleaned = _CONDICION_MAP.get(co.lower(), "1")
+        _fix("condicion_operacion", co, cleaned)
+        row["condicion_operacion"] = cleaned
+
+    return row, fixes
+
+
+# ---------------------------------------------------------------------------
 # Row → DTEEmitRequest converter
 # ---------------------------------------------------------------------------
 
@@ -305,11 +413,15 @@ def _row_to_emit_params(row: dict, row_num: int) -> tuple[Optional[dict], Option
 # ---------------------------------------------------------------------------
 
 def preview_batch(rows: list[dict]) -> dict:
-    """Validate all rows and return preview with errors."""
+    """Validate all rows (with auto-sanitization) and return preview with errors."""
     valid = []
     errors = []
+    all_fixes = []
 
     for i, row in enumerate(rows, 1):
+        row, fixes = _sanitize_batch_row(row)
+        for f in fixes:
+            all_fixes.append({"row": i, **f})
         params, err = _row_to_emit_params(row, i)
         if err:
             errors.append({"row": i, "error": err})
@@ -320,8 +432,10 @@ def preview_batch(rows: list[dict]) -> dict:
         "total_rows": len(rows),
         "valid": len(valid),
         "invalid": len(errors),
+        "auto_fixed": len(set(f["row"] for f in all_fixes)),
+        "fixes": all_fixes[:50],
         "errors": errors,
-        "preview": valid[:10],  # First 10 for UI preview
+        "preview": valid[:10],
     }
 
 
@@ -344,6 +458,7 @@ async def emit_batch(
     error_count = 0
 
     for i, row in enumerate(rows, 1):
+        row, _ = _sanitize_batch_row(row)
         params, validation_err = _row_to_emit_params(row, i)
 
         if validation_err:
