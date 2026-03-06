@@ -478,14 +478,16 @@ async def _import_productos(rows, org_id, supabase, mapping, headers):
 
 async def _import_receptores(rows, org_id, supabase, mapping, headers):
     from app.services.import_service import ImportResult
+    from datetime import datetime, timezone
     result = ImportResult()
     existing = set()
     try:
-        resp = supabase.table("dte_receptores").select("num_documento").eq("org_id", org_id).execute()
+        resp = supabase.table("receptores_frecuentes").select("num_documento").eq("org_id", org_id).execute()
         existing = {r["num_documento"] for r in (resp.data or []) if r.get("num_documento")}
     except:
         pass
 
+    now = datetime.now(timezone.utc).isoformat()
     to_insert = []
     for i, row in enumerate(rows, start=2):
         nombre = row.get("nombre", "").strip()
@@ -512,6 +514,9 @@ async def _import_receptores(rows, org_id, supabase, mapping, headers):
         depto = row.get("departamento", "").strip() or None
         if depto:
             depto = _clean_departamento(depto)
+        municipio = row.get("municipio", "").strip() or None
+        if municipio:
+            municipio = _clean_municipio(municipio)
 
         to_insert.append({
             "org_id": org_id, "nombre": nombre[:200],
@@ -521,19 +526,23 @@ async def _import_receptores(rows, org_id, supabase, mapping, headers):
             "desc_actividad": row.get("desc_actividad", "").strip() or None,
             "nombre_comercial": row.get("nombre_comercial", "").strip() or None,
             "direccion_departamento": depto,
-            "direccion_municipio": row.get("municipio", "").strip() or None,
+            "direccion_municipio": municipio,
             "direccion_complemento": row.get("complemento", "").strip() or None,
             "telefono": row.get("telefono", "").strip() or None,
             "correo": correo,
             "tipo_receptor": "contribuyente" if tipo_doc == "36" else "consumidor_final",
             "is_favorite": False,
+            "uso_count": 0,
+            "last_used_at": now,
+            "created_at": now,
+            "updated_at": now,
         })
         existing.add(num_doc)
 
     for start in range(0, len(to_insert), 100):
         batch = to_insert[start:start + 100]
         try:
-            supabase.table("dte_receptores").insert(batch).execute()
+            supabase.table("receptores_frecuentes").insert(batch).execute()
             result.imported += len(batch)
         except Exception as exc:
             for j in range(len(batch)):

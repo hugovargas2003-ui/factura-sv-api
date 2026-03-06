@@ -338,7 +338,7 @@ async def import_receptores(
     existing_docs: set[str] = set()
     try:
         resp = (
-            supabase_client.table("dte_receptores")
+            supabase_client.table("receptores_frecuentes")
             .select("num_documento")
             .eq("org_id", org_id)
             .execute()
@@ -347,6 +347,8 @@ async def import_receptores(
     except Exception:
         pass
 
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
     to_insert: list[dict] = []
 
     for i, row in enumerate(rows, start=2):
@@ -361,6 +363,10 @@ async def import_receptores(
             continue
 
         validated["org_id"] = org_id
+        validated["uso_count"] = 0
+        validated["last_used_at"] = now
+        validated["created_at"] = now
+        validated["updated_at"] = now
         to_insert.append(validated)
         existing_docs.add(validated["num_documento"])
 
@@ -369,7 +375,7 @@ async def import_receptores(
     for start in range(0, len(to_insert), batch_size):
         batch = to_insert[start : start + batch_size]
         try:
-            supabase_client.table("dte_receptores").insert(batch).execute()
+            supabase_client.table("receptores_frecuentes").insert(batch).execute()
             result.imported += len(batch)
         except Exception as exc:
             for j, _ in enumerate(batch):
