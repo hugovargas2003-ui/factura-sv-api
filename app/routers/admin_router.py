@@ -18,8 +18,8 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 # ── Admin Guard ──
 
 async def require_admin(user: dict = Depends(get_current_user)) -> dict:
-    """Solo permite acceso a usuarios con role 'admin'."""
-    if user.get("role") not in ("admin",):
+    """Solo permite acceso a usuarios con role 'admin' o 'owner'."""
+    if user.get("role") not in ("admin", "owner"):
         raise HTTPException(403, "Acceso denegado: se requiere rol de administrador")
     return user
 
