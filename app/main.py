@@ -817,3 +817,6 @@ app.include_router(catalog_router, prefix="/api/v1")
 
 from app.routers.fiscal_id_router import router as fiscal_id_router
 app.include_router(fiscal_id_router)
+
+from app.routers.org_link_router import router as org_link_router
+app.include_router(org_link_router)
