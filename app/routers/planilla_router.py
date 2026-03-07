@@ -400,10 +400,26 @@ async def confirmar_planilla(
     from app.routers.renta_router import _update_periodo_totals
     _update_periodo_totals(supabase, org_id, periodo)
 
+    # Generate accounting entry (non-blocking — if it fails, planilla is still confirmed)
+    entry_id = None
+    try:
+        from app.services.contabilidad_service import generate_planilla_entry
+        planilla_totals = supabase.table("planilla_resumen") \
+            .select("*").eq("id", planilla_id).execute()
+        if planilla_totals.data:
+            entry_id = await generate_planilla_entry(
+                supabase, org_id, planilla_totals.data[0], user.get("user_id")
+            )
+            if entry_id:
+                logger.info(f"Partida contable {entry_id} generada para planilla {planilla_id}")
+    except Exception as e:
+        logger.warning(f"Partida contable no generada (no bloquea): {e}")
+
     return {
         "confirmed": True,
         "empleados_to_f14": created,
         "periodo": periodo,
+        "journal_entry_id": entry_id,
     }
 
 

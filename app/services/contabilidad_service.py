@@ -384,3 +384,156 @@ async def get_balance_general(supabase: Any, org_id: str, fecha_corte: Optional[
         "total_debe": round(sum(c["total_debe"] for c in cuentas), 2),
         "total_haber": round(sum(c["total_haber"] for c in cuentas), 2),
     }
+
+
+# Payroll accounts to auto-create if missing
+_PAYROLL_ACCOUNTS = [
+    ("210301", "ISR Retenido por Pagar", "pasivo", "acreedora", 4),
+    ("210302", "AFP por Pagar", "pasivo", "acreedora", 4),
+    ("210303", "ISSS por Pagar", "pasivo", "acreedora", 4),
+    ("210304", "INSAFORP por Pagar", "pasivo", "acreedora", 4),
+    ("610201", "Sueldos y Salarios", "gasto", "deudora", 4),
+    ("610202", "AFP Patronal", "gasto", "deudora", 4),
+    ("610203", "ISSS Patronal", "gasto", "deudora", 4),
+    ("610204", "INSAFORP", "gasto", "deudora", 4),
+]
+
+
+async def generate_planilla_entry(
+    supabase: Any, org_id: str, planilla_data: dict, user_id: str = None,
+) -> Optional[str]:
+    """
+    Auto-generate journal entry from confirmed planilla.
+    Non-blocking — if it fails, planilla confirmation still succeeds.
+    Same pattern as generate_dte_entry().
+    """
+    try:
+        # 1. Ensure payroll accounts exist for this org
+        for codigo, nombre, tipo, naturaleza, nivel in _PAYROLL_ACCOUNTS:
+            existing = supabase.table("chart_of_accounts") \
+                .select("id").eq("org_id", org_id).eq("codigo", codigo).execute()
+            if not existing.data:
+                supabase.table("chart_of_accounts").insert({
+                    "org_id": org_id,
+                    "codigo": codigo,
+                    "nombre": nombre,
+                    "tipo": tipo,
+                    "naturaleza": naturaleza,
+                    "nivel": nivel,
+                    "es_detalle": True,
+                    "activa": True,
+                }).execute()
+
+        # 2. Get account IDs
+        needed = ["110102", "210301", "210302", "210303", "210304",
+                  "610201", "610202", "610203", "610204"]
+        accts_result = supabase.table("chart_of_accounts") \
+            .select("id, codigo, nombre") \
+            .eq("org_id", org_id).eq("activa", True) \
+            .in_("codigo", needed).execute()
+        acct_map = {a["codigo"]: a for a in (accts_result.data or [])}
+
+        # Fallback: if Bancos (110102) doesn't exist, try Caja (110101)
+        if "110102" not in acct_map:
+            cash = supabase.table("chart_of_accounts") \
+                .select("id, codigo, nombre").eq("org_id", org_id) \
+                .eq("codigo", "110101").execute()
+            if cash.data:
+                acct_map["110102"] = cash.data[0]
+
+        # 3. Extract totals
+        total_devengado = float(planilla_data.get("total_salarios", 0))
+        total_afp_emp = float(planilla_data.get("total_afp_emp", 0))
+        total_afp_pat = float(planilla_data.get("total_afp_pat", 0))
+        total_isss_emp = float(planilla_data.get("total_isss_emp", 0))
+        total_isss_pat = float(planilla_data.get("total_isss_pat", 0))
+        total_insaforp = float(planilla_data.get("total_insaforp", 0))
+        total_isr = float(planilla_data.get("total_isr", 0))
+        total_neto = float(planilla_data.get("total_neto", 0))
+        periodo = planilla_data.get("periodo", "")
+        planilla_id = planilla_data.get("id", "")
+
+        total_debe = round(total_devengado + total_afp_pat + total_isss_pat + total_insaforp, 2)
+        total_haber = round(
+            total_neto + total_isr
+            + (total_afp_emp + total_afp_pat)
+            + (total_isss_emp + total_isss_pat)
+            + total_insaforp, 2
+        )
+
+        if abs(total_debe - total_haber) > 0.02:
+            logger.warning(
+                f"Planilla entry unbalanced: debe={total_debe} haber={total_haber} "
+                f"diff={round(total_debe - total_haber, 2)}"
+            )
+
+        # 4. Get next entry number (same pattern as generate_dte_entry)
+        numero = await _get_next_entry_number(supabase, org_id)
+
+        desc = f"Planilla {periodo} — {planilla_data.get('total_empleados', 0)} empleados"
+
+        entry = {
+            "org_id": org_id,
+            "numero": numero,
+            "fecha": date.today().isoformat(),
+            "descripcion": desc,
+            "tipo": "automatica",
+            "referencia_tipo": "planilla",
+            "referencia_id": planilla_id,
+            "total_debe": total_debe,
+            "total_haber": total_haber,
+            "estado": "registrada",
+            "created_by": user_id,
+        }
+        entry_result = supabase.table("journal_entries").insert(entry).execute()
+        if not entry_result.data:
+            return None
+
+        entry_id = entry_result.data[0]["id"]
+
+        # 5. Build lines — DEBE (gastos) + HABER (retenciones + pago)
+        line_defs = []
+
+        # DEBE lines
+        if total_devengado > 0 and "610201" in acct_map:
+            line_defs.append(("610201", total_devengado, 0, "Sueldos y salarios"))
+        if total_afp_pat > 0 and "610202" in acct_map:
+            line_defs.append(("610202", total_afp_pat, 0, "AFP patronal"))
+        if total_isss_pat > 0 and "610203" in acct_map:
+            line_defs.append(("610203", total_isss_pat, 0, "ISSS patronal"))
+        if total_insaforp > 0 and "610204" in acct_map:
+            line_defs.append(("610204", total_insaforp, 0, "INSAFORP"))
+
+        # HABER lines
+        if total_neto > 0 and "110102" in acct_map:
+            line_defs.append(("110102", 0, total_neto, "Pago neto nomina"))
+        if total_isr > 0 and "210301" in acct_map:
+            line_defs.append(("210301", 0, total_isr, "ISR retenido empleados"))
+        afp_total = total_afp_emp + total_afp_pat
+        if afp_total > 0 and "210302" in acct_map:
+            line_defs.append(("210302", 0, afp_total, "AFP por pagar"))
+        isss_total = total_isss_emp + total_isss_pat
+        if isss_total > 0 and "210303" in acct_map:
+            line_defs.append(("210303", 0, isss_total, "ISSS por pagar"))
+        if total_insaforp > 0 and "210304" in acct_map:
+            line_defs.append(("210304", 0, total_insaforp, "INSAFORP por pagar"))
+
+        for codigo, debe, haber, concepto in line_defs:
+            acct = acct_map[codigo]
+            supabase.table("journal_entry_lines").insert({
+                "journal_entry_id": entry_id,
+                "org_id": org_id,
+                "cuenta_id": acct["id"],
+                "cuenta_codigo": acct["codigo"],
+                "cuenta_nombre": acct["nombre"],
+                "debe": round(debe, 2),
+                "haber": round(haber, 2),
+                "concepto": concepto,
+            }).execute()
+
+        logger.info(f"Planilla entry #{numero} for periodo {periodo}: debe={total_debe} haber={total_haber}")
+        return entry_id
+
+    except Exception as e:
+        logger.warning(f"Error generating planilla entry: {e}")
+        return None
