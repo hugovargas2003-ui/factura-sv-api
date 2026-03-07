@@ -826,3 +826,6 @@ app.include_router(renta_router)
 
 from app.routers.planilla_router import router as planilla_router
 app.include_router(planilla_router)
+
+from app.routers.conciliacion_bancaria_router import router as conciliacion_bancaria_router
+app.include_router(conciliacion_bancaria_router)
