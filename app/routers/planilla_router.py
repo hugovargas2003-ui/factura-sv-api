@@ -38,6 +38,7 @@ class EmpleadoUpdate(BaseModel):
     salario_base: Optional[float] = None
     bonificaciones: Optional[float] = None
     isr_retenido: Optional[float] = None
+    isr_override_motivo: Optional[str] = None
     afp: Optional[float] = None
     isss: Optional[float] = None
 
@@ -362,6 +363,15 @@ async def actualizar_empleado(
 ):
     org_id = user.get("org_id")
     update_data = {k: v for k, v in body.dict().items() if v is not None}
+
+    # ISR override audit trail
+    if body.isr_retenido is not None:
+        current = supabase.table("planilla_empleados") \
+            .select("isr_retenido").eq("id", empleado_id).eq("org_id", org_id).execute()
+        if current.data:
+            update_data["isr_override_original"] = current.data[0].get("isr_retenido", 0)
+            update_data["isr_override_by"] = user.get("user_id")
+            update_data["isr_override_at"] = datetime.now(timezone.utc).isoformat()
 
     result = supabase.table("planilla_empleados") \
         .update(update_data) \
