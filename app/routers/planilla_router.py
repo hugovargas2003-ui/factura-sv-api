@@ -95,6 +95,61 @@ def _calcular_empleado(emp: dict, supabase) -> dict:
     }
 
 
+def _validate_planilla_data(rows_parsed: list) -> dict:
+    """
+    Validación post-parse de datos de planilla.
+    Retorna {errors: [...], warnings: [...]}
+    errors = bloquean el upload
+    warnings = se muestran pero no bloquean
+    """
+    errors = []
+    warnings = []
+    seen_ids: set[str] = set()
+
+    SALARIO_MINIMO_SV = 365.00  # Comercio/servicios 2024
+    SALARIO_MAXIMO_RAZONABLE = 50000.00
+
+    for i, emp in enumerate(rows_parsed):
+        row_num = i + 2  # +2 por header + 0-indexed
+        nombre = str(emp.get("nombre", "")).strip()
+        salario = emp.get("salario_base", 0)
+        nit = str(emp.get("nit", "") or "")
+        dui = str(emp.get("dui", "") or "")
+
+        # Errores (bloquean)
+        if salario is not None and float(salario) < 0:
+            errors.append(f"Fila {row_num}: Salario negativo (${salario}) para {nombre}")
+
+        if not nombre:
+            errors.append(f"Fila {row_num}: Nombre vacío")
+            continue
+
+        # Warnings (no bloquean)
+        if salario is not None and float(salario) < SALARIO_MINIMO_SV and float(salario) > 0:
+            warnings.append(f"Fila {row_num}: Salario ${salario} menor al mínimo (${SALARIO_MINIMO_SV}) para {nombre}")
+
+        if salario is not None and float(salario) > SALARIO_MAXIMO_RAZONABLE:
+            warnings.append(f"Fila {row_num}: Salario ${salario} inusualmente alto para {nombre}")
+
+        # Duplicados por NIT o DUI
+        id_key = nit or dui or nombre.lower()
+        if id_key in seen_ids:
+            warnings.append(f"Fila {row_num}: Posible duplicado — {nombre} ({nit or dui})")
+        seen_ids.add(id_key)
+
+        # NIT formato (14 dígitos)
+        if nit and len(nit.replace("-", "").replace(" ", "")) not in (0, 14):
+            warnings.append(f"Fila {row_num}: NIT '{nit}' no tiene 14 dígitos para {nombre}")
+
+        # DUI formato (9 dígitos + guión + 1)
+        if dui:
+            dui_clean = dui.replace("-", "").replace(" ", "")
+            if len(dui_clean) not in (0, 9, 10):
+                warnings.append(f"Fila {row_num}: DUI '{dui}' formato inválido para {nombre}")
+
+    return {"errors": errors, "warnings": warnings}
+
+
 def _recalc_planilla_totals(supabase, planilla_id: str):
     """Recalcula totales del resumen de planilla."""
     emps = supabase.table("planilla_empleados") \
@@ -193,6 +248,25 @@ async def upload_planilla(
                     return row[key]
         return None
 
+    # Pre-validate parsed data
+    pre_parsed = []
+    for row in rows:
+        pre_parsed.append({
+            "nombre": str(find_col(row, col_map["nombre"]) or ""),
+            "salario_base": float(str(find_col(row, col_map["salario_base"]) or 0).replace(",", "").replace("$", "").strip() or 0),
+            "nit": str(find_col(row, col_map["nit"]) or ""),
+            "dui": str(find_col(row, col_map["dui"]) or ""),
+        })
+    validation = _validate_planilla_data(pre_parsed)
+    if validation["errors"]:
+        return {
+            "planilla_id": None,
+            "empleados_created": 0,
+            "errors": validation["errors"],
+            "warnings": validation["warnings"],
+            "status": "validation_failed",
+        }
+
     planilla = supabase.table("planilla_resumen").insert({
         "org_id": org_id,
         "periodo": periodo,
@@ -254,6 +328,7 @@ async def upload_planilla(
         "planilla_id": planilla_id,
         "empleados_created": empleados_created,
         "errors": errors,
+        "warnings": validation.get("warnings", []),
         "status": "draft",
     }
 
