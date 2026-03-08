@@ -266,7 +266,7 @@ async def cuadre_iva(
     # IVA Débito: DTEs emitidos (tabla "dtes")
     emitidos = supabase.table("dtes").select(
         "tipo_dte,total_gravada,monto_total"
-    ).eq("org_id", org_id).eq("estado", "procesado").gte("fecha_emision", fecha_desde).lt("fecha_emision", fecha_hasta).execute()
+    ).eq("org_id", org_id).in_("estado", ["procesado", "IMPORTADO"]).gte("fecha_emision", fecha_desde).lt("fecha_emision", fecha_hasta).execute()
 
     iva_debito = 0.0
     ventas_gravadas = 0.0
@@ -325,3 +325,151 @@ async def delete_dte_recibido(
 ):
     supabase.table("dte_recibidos").update({"status": "anulado", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", dte_id).eq("org_id", user["org_id"]).execute()
     return {"deleted": True, "id": dte_id}
+
+
+# ═══════════════════════════════════════════
+# IMPORT CSV/XLSX DE COMPRAS
+# ═══════════════════════════════════════════
+
+@router.post("/dte-recibidos/import-csv")
+async def import_csv_recibidos(
+    file: UploadFile = File(...),
+    supabase=Depends(get_supabase),
+    user=Depends(get_current_user),
+):
+    """Import DTEs recibidos desde CSV/XLSX (compras que no están en JSON MH)."""
+    import io as _io
+    import uuid
+
+    org_id = user["org_id"]
+    content = await file.read()
+    filename = file.filename or ""
+
+    rows: list[dict] = []
+    if filename.endswith(".csv"):
+        text = content.decode("utf-8-sig")
+        reader = csv.DictReader(_io.StringIO(text))
+        rows = list(reader)
+    elif filename.endswith((".xlsx", ".xls")):
+        import openpyxl
+        wb = openpyxl.load_workbook(_io.BytesIO(content), data_only=True)
+        ws = wb.active
+        headers = [str(cell.value or "").strip().lower() for cell in ws[1]]
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if not any(row):
+                continue
+            row_dict = {headers[i]: row[i] for i in range(min(len(headers), len(row)))}
+            rows.append(row_dict)
+    else:
+        raise HTTPException(status_code=400, detail="Formato no soportado. Use CSV o XLSX.")
+
+    if not rows:
+        raise HTTPException(status_code=400, detail="Archivo vacío")
+
+    col_aliases = {
+        "fecha": ["fecha", "date", "fec_emi", "fecha_emision", "fecha emision"],
+        "tipo_dte": ["tipo", "tipo_dte", "tipo dte", "tipo_documento", "clase"],
+        "numero_control": ["numero_control", "numero control", "no_control", "control"],
+        "codigo_generacion": ["codigo_generacion", "codigo generacion", "codigo", "uuid"],
+        "emisor_nit": ["nit_emisor", "emisor_nit", "nit proveedor", "nit", "nit_proveedor"],
+        "emisor_nombre": ["nombre_emisor", "emisor_nombre", "proveedor", "nombre proveedor", "razon_social"],
+        "emisor_nrc": ["nrc_emisor", "emisor_nrc", "nrc", "nrc proveedor"],
+        "total_gravada": ["gravada", "total_gravada", "compra_gravada", "gravadas", "monto_gravado"],
+        "total_exenta": ["exenta", "total_exenta", "exentas"],
+        "iva_credito": ["iva", "iva_credito", "credito_fiscal", "iva credito", "cf"],
+        "monto_total": ["total", "monto_total", "monto", "total_compra"],
+        "sello_recepcion": ["sello", "sello_recepcion"],
+    }
+
+    def _find_val(row, aliases):
+        for alias in aliases:
+            for key in row:
+                if str(key).strip().lower() == alias:
+                    v = row[key]
+                    return str(v).strip() if v is not None else None
+        return None
+
+    def _safe_float(val):
+        if val is None:
+            return 0.0
+        try:
+            return float(str(val).replace(",", "").replace("$", "").strip())
+        except Exception:
+            return 0.0
+
+    created = 0
+    updated = 0
+    errors = []
+
+    for i, row in enumerate(rows):
+        try:
+            emisor_nit = _find_val(row, col_aliases["emisor_nit"])
+            emisor_nombre = _find_val(row, col_aliases["emisor_nombre"])
+
+            if not emisor_nombre and not emisor_nit:
+                errors.append(f"Fila {i+2}: sin emisor/proveedor identificable")
+                continue
+
+            fecha = _find_val(row, col_aliases["fecha"]) or datetime.now().strftime("%Y-%m-%d")
+            tipo = _find_val(row, col_aliases["tipo_dte"]) or "03"
+
+            total_gravada = _safe_float(_find_val(row, col_aliases["total_gravada"]))
+            iva_credito = _safe_float(_find_val(row, col_aliases["iva_credito"]))
+            total_exenta = _safe_float(_find_val(row, col_aliases["total_exenta"]))
+            monto_total = _safe_float(_find_val(row, col_aliases["monto_total"]))
+
+            # If IVA not provided, calculate from gravada
+            if iva_credito == 0 and total_gravada > 0 and tipo == "03":
+                iva_credito = round(total_gravada * 0.13, 2)
+
+            if monto_total == 0:
+                monto_total = total_gravada + iva_credito
+
+            codigo_gen = _find_val(row, col_aliases["codigo_generacion"])
+            numero_ctrl = _find_val(row, col_aliases["numero_control"])
+            sello = _find_val(row, col_aliases["sello_recepcion"])
+
+            if not codigo_gen:
+                codigo_gen = f"IMP-{uuid.uuid4()}"
+
+            existing = supabase.table("dte_recibidos") \
+                .select("id").eq("org_id", org_id).eq("codigo_generacion", codigo_gen).execute()
+
+            record = {
+                "org_id": org_id,
+                "codigo_generacion": codigo_gen,
+                "numero_control": numero_ctrl,
+                "sello_recepcion": sello,
+                "tipo_dte": str(tipo).zfill(2),
+                "fec_emi": fecha,
+                "emisor_nit": emisor_nit or "",
+                "emisor_nombre": emisor_nombre or "Sin nombre",
+                "emisor_nrc": _find_val(row, col_aliases["emisor_nrc"]),
+                "total_gravada": total_gravada,
+                "total_exenta": total_exenta,
+                "iva_credito": iva_credito,
+                "monto_total": monto_total,
+                "total_pagar": monto_total,
+                "json_original": {"source": "csv_import", "row": i + 2},
+                "source": "csv_import",
+                "items_count": 0,
+            }
+
+            if existing.data:
+                record["updated_at"] = datetime.now(timezone.utc).isoformat()
+                supabase.table("dte_recibidos") \
+                    .update(record).eq("id", existing.data[0]["id"]).execute()
+                updated += 1
+            else:
+                supabase.table("dte_recibidos").insert(record).execute()
+                created += 1
+
+        except Exception as e:
+            errors.append(f"Fila {i+2}: {str(e)}")
+
+    return {
+        "created": created,
+        "updated": updated,
+        "errors": errors,
+        "total_rows": len(rows),
+    }

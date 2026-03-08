@@ -829,3 +829,6 @@ app.include_router(planilla_router)
 
 from app.routers.conciliacion_bancaria_router import router as conciliacion_bancaria_router
 app.include_router(conciliacion_bancaria_router)
+
+from app.routers.dte_import_router import router as dte_import_router
+app.include_router(dte_import_router)
