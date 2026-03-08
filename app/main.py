@@ -832,3 +832,6 @@ app.include_router(conciliacion_bancaria_router)
 
 from app.routers.dte_import_router import router as dte_import_router
 app.include_router(dte_import_router)
+
+from app.routers.contabilidad_export_router import router as contabilidad_export_router
+app.include_router(contabilidad_export_router)
