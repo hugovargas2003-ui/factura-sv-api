@@ -835,3 +835,6 @@ app.include_router(dte_import_router)
 
 from app.routers.contabilidad_export_router import router as contabilidad_export_router
 app.include_router(contabilidad_export_router)
+
+from app.routers.contador_batch_router import router as contador_batch_router
+app.include_router(contador_batch_router)
