@@ -17,14 +17,97 @@ router = APIRouter(prefix="/api/v1/conciliacion-bancaria", tags=["conciliacion-b
 from app.dependencies import get_current_user, get_supabase
 
 
+# ═══════════════════════════════════════════
+# BANK-SPECIFIC PARSERS
+# ═══════════════════════════════════════════
+
+BANK_MAPPINGS = {
+    "bac": {
+        "fecha": ["fecha", "date"],
+        "descripcion": ["descripción", "descripcion", "detalle"],
+        "debito": ["débito", "debito", "cargo"],
+        "credito": ["crédito", "credito", "abono"],
+        "referencia": ["referencia", "ref", "documento", "no. documento"],
+    },
+    "agricola": {
+        "fecha": ["fecha mov", "fecha movimiento", "fecha"],
+        "descripcion": ["concepto", "descripción", "descripcion"],
+        "debito": ["cargo", "débito", "debito"],
+        "credito": ["abono", "crédito", "credito"],
+        "referencia": ["no. documento", "referencia", "doc", "numero"],
+    },
+    "davivienda": {
+        "fecha": ["fecha proceso", "fecha"],
+        "descripcion": ["descripción", "descripcion", "concepto"],
+        "monto": ["monto", "valor"],
+        "referencia": ["referencia", "ref"],
+    },
+    "generico": {
+        "fecha": ["fecha", "date", "fecha_transaccion", "fecha transaccion"],
+        "monto": ["monto", "amount", "valor", "importe"],
+        "debito": ["debito", "debit", "cargo", "débito"],
+        "credito": ["credito", "credit", "abono", "deposito", "crédito"],
+        "descripcion": ["descripcion", "description", "concepto", "detalle", "descripción"],
+        "referencia": ["referencia", "reference", "ref", "numero", "no_transaccion"],
+    },
+}
+
+
+def _detect_bank_format(headers: list) -> str:
+    """Detect bank CSV format from column headers."""
+    headers_lower = [str(h).lower().strip() for h in headers if h]
+
+    # BAC: has "balance"/"saldo" + "débito"/"debito"
+    if any(h in ("balance", "saldo", "saldo actual") for h in headers_lower) and \
+       any(h in ("débito", "debito", "cargo") for h in headers_lower):
+        return "bac"
+
+    # Agrícola: has "fecha mov" or "abono" as header
+    if any("mov" in h for h in headers_lower) or \
+       (any(h == "abono" for h in headers_lower) and any(h == "cargo" for h in headers_lower)):
+        return "agricola"
+
+    # Davivienda: has "fecha proceso"
+    if any("proceso" in h for h in headers_lower):
+        return "davivienda"
+
+    return "generico"
+
+
+def _find_col(row: dict, aliases: list) -> str | None:
+    """Find a column value using alias list."""
+    for alias in aliases:
+        for key in row:
+            if str(key).strip().lower() == alias:
+                v = row[key]
+                return str(v).strip() if v is not None else None
+    return None
+
+
+def _parse_amount(val: str | None) -> float | None:
+    """Parse a monetary amount, handling $, commas, parentheses for negatives."""
+    if not val:
+        return None
+    v = val.strip().replace("$", "").replace(",", "").replace(" ", "")
+    if not v or v == "-":
+        return None
+    # Handle (123.45) as negative
+    if v.startswith("(") and v.endswith(")"):
+        v = "-" + v[1:-1]
+    try:
+        return float(v)
+    except ValueError:
+        return None
+
+
 @router.post("/upload")
 async def upload_estado_cuenta(
-    banco: str = Query("generico", description="BAC, agricola, davivienda, generico"),
+    banco: str = Query("auto", description="auto, BAC, agricola, davivienda, generico"),
     file: UploadFile = File(...),
     supabase=Depends(get_supabase),
     user=Depends(get_current_user),
 ):
-    """Upload CSV de estado de cuenta bancario."""
+    """Upload CSV de estado de cuenta bancario con auto-detección de formato."""
     org_id = user.get("org_id")
     content = await file.read()
     text = content.decode("utf-8-sig")
@@ -35,49 +118,38 @@ async def upload_estado_cuenta(
     if not rows:
         raise HTTPException(status_code=400, detail="Archivo vacío")
 
+    # Auto-detect bank format if needed
+    headers = list(rows[0].keys()) if rows else []
+    detected_banco = banco
+    if banco == "auto":
+        detected_banco = _detect_bank_format(headers)
+
+    mapping = BANK_MAPPINGS.get(detected_banco.lower(), BANK_MAPPINGS["generico"])
+
     created = 0
     errors = []
 
     for i, row in enumerate(rows):
         try:
-            fecha = None
+            fecha = _find_col(row, mapping.get("fecha", []))
+            descripcion = _find_col(row, mapping.get("descripcion", []))
+            referencia = _find_col(row, mapping.get("referencia", []))
+
             monto = None
-            referencia = None
-            descripcion = None
 
-            for key, val in row.items():
-                k = str(key).strip().lower()
-                v = str(val).strip() if val else ""
-                if not v:
-                    continue
-
-                if k in ("fecha", "date", "fecha_transaccion", "fecha transaccion"):
-                    fecha = v
-                elif k in ("monto", "amount", "valor", "importe"):
-                    try:
-                        monto = float(v.replace(",", "").replace("$", ""))
-                    except ValueError:
-                        pass
-                elif k in ("referencia", "reference", "ref", "numero", "no_transaccion"):
-                    referencia = v
-                elif k in ("descripcion", "description", "concepto", "detalle"):
-                    descripcion = v
+            # Try single monto column first
+            if "monto" in mapping:
+                monto = _parse_amount(_find_col(row, mapping["monto"]))
 
             # Try separate debit/credit columns
             if monto is None:
-                for key, val in row.items():
-                    k = str(key).strip().lower()
-                    v = str(val).strip() if val else ""
-                    if k in ("debito", "debit", "cargo") and v:
-                        try:
-                            monto = -abs(float(v.replace(",", "").replace("$", "")))
-                        except ValueError:
-                            pass
-                    elif k in ("credito", "credit", "abono", "deposito") and v:
-                        try:
-                            monto = abs(float(v.replace(",", "").replace("$", "")))
-                        except ValueError:
-                            pass
+                debito_val = _parse_amount(_find_col(row, mapping.get("debito", [])))
+                credito_val = _parse_amount(_find_col(row, mapping.get("credito", [])))
+
+                if debito_val is not None and debito_val != 0:
+                    monto = -abs(debito_val)
+                elif credito_val is not None and credito_val != 0:
+                    monto = abs(credito_val)
 
             if monto is None:
                 errors.append(f"Fila {i+2}: sin monto detectable")
@@ -92,7 +164,7 @@ async def upload_estado_cuenta(
                 "descripcion": descripcion,
                 "monto": monto,
                 "tipo": tipo,
-                "banco": banco,
+                "banco": detected_banco,
                 "status": "pending",
             }).execute()
             created += 1
@@ -100,7 +172,12 @@ async def upload_estado_cuenta(
         except Exception as e:
             errors.append(f"Fila {i+2}: {str(e)}")
 
-    return {"created": created, "errors": errors, "total_rows": len(rows)}
+    return {
+        "created": created,
+        "errors": errors,
+        "total_rows": len(rows),
+        "banco_detectado": detected_banco,
+    }
 
 
 @router.post("/auto-match")
