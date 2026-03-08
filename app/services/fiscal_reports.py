@@ -43,7 +43,7 @@ async def _fetch_dtes_by_type(
         "iva, monto_total, sello_recibido, estado"
     ).eq("org_id", org_id).eq(
         "tipo_dte", tipo_dte
-    ).eq("estado", "procesado").gte(
+    ).in_("estado", ["procesado", "IMPORTADO"]).gte(
         "fecha_emision", date_from
     ).lt(
         "fecha_emision", date_to

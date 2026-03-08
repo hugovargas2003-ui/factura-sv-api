@@ -1326,7 +1326,7 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         service=Depends(get_dte_service),
         user=Depends(get_current_user),
     ):
-        """Descarga ZIP con ambos anexos F-07 (Anexo 1 + Anexo 2)."""
+        """Descarga ZIP con los 3 anexos F-07 (Anexo 1 + Anexo 2 + Anexo 3)."""
         zip_bytes, filename = await f07_generator.generate_f07_zip(
             service.db, user["org_id"], periodo
         )

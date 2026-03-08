@@ -133,7 +133,7 @@ async def _fetch_dtes_con_json(
         )
         .eq("org_id", org_id)
         .in_("tipo_dte", tipos)
-        .eq("estado", "procesado")
+        .in_("estado", ["procesado", "IMPORTADO"])
         .gte("fecha_emision", date_from)
         .lte("fecha_emision", date_to)
         .order("fecha_emision")
@@ -435,18 +435,20 @@ async def generate_f07_zip(
     supabase: Any, org_id: str, periodo: str
 ) -> tuple[bytes, str]:
     """
-    Genera ZIP con Anexo 1 y Anexo 2.
+    Genera ZIP con Anexo 1, Anexo 2 y Anexo 3.
     Retorna (zip_bytes, filename).
     """
     nit = await _fetch_emisor_nit(supabase, org_id)
 
     anexo1_bytes = await generate_anexo1(supabase, org_id, periodo)
     anexo2_bytes = await generate_anexo2(supabase, org_id, periodo)
+    anexo3_bytes = await generate_anexo3(supabase, org_id, periodo)
 
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(f"Anexo1_Ventas_Contribuyentes_{periodo}.csv", anexo1_bytes)
         zf.writestr(f"Anexo2_Ventas_ConsumidorFinal_{periodo}.csv", anexo2_bytes)
+        zf.writestr(f"Anexo3_Retenciones_Percepciones_{periodo}.csv", anexo3_bytes)
 
     zip_buffer.seek(0)
     filename = f"F07_{periodo}_{nit}.zip"
