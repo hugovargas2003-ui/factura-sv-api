@@ -107,3 +107,34 @@ async def export_estado_resultados(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+@router.get("/partidas/{entry_id}/pdf")
+async def export_partida_pdf(
+    entry_id: str,
+    supabase=Depends(get_supabase),
+    user=Depends(get_current_user),
+):
+    """Genera PDF profesional de una partida contable individual."""
+    org_id = user.get("org_id")
+
+    entry = supabase.table("journal_entries") \
+        .select("*").eq("id", entry_id).eq("org_id", org_id).execute()
+    if not entry.data:
+        raise HTTPException(status_code=404, detail="Partida no encontrada")
+
+    lines = supabase.table("journal_entry_lines") \
+        .select("*").eq("journal_entry_id", entry_id).eq("org_id", org_id) \
+        .order("debe", desc=True).execute()
+
+    org_info = _get_org_info(supabase, org_id)
+
+    from app.services.contabilidad_pdf_service import generate_partida_pdf
+    pdf_bytes = generate_partida_pdf(entry.data[0], lines.data or [], org_info)
+
+    numero = entry.data[0].get("numero", "")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=Partida_{numero}.pdf"},
+    )

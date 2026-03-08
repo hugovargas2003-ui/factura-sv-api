@@ -841,3 +841,6 @@ app.include_router(contador_batch_router)
 
 from app.routers.fiscal_alerts_router import router as fiscal_alerts_router
 app.include_router(fiscal_alerts_router)
+
+from app.routers.dte_export_router import router as dte_export_router
+app.include_router(dte_export_router)
