@@ -77,6 +77,9 @@ _COLUMN_ALIASES: dict[str, str] = {
     "valor": "item_precio", "price": "item_precio",
     "cantidad": "item_cantidad", "qty": "item_cantidad", "cant": "item_cantidad",
     "unidades": "item_cantidad",
+    "tipo_venta": "item_tipo_venta", "tipo venta": "item_tipo_venta",
+    "exenta": "item_tipo_venta", "gravada": "item_tipo_venta",
+    "afecta": "item_tipo_venta", "tipo operacion item": "item_tipo_venta",
     "tipo item": "item_tipo", "tipo_item": "item_tipo",
     "unidad medida": "item_unidad_medida", "unidad_medida": "item_unidad_medida",
     "unidad": "item_unidad_medida",
@@ -395,6 +398,7 @@ def _row_to_emit_params(row: dict, row_num: int) -> tuple[Optional[dict], Option
         "unidad_medida": int(row.get("item_unidad_medida", "59").strip() or "59"),
         "codigo": row.get("item_codigo", "").strip() or None,
         "descuento": 0,
+        "tipo_venta": row.get("item_tipo_venta", "gravada").strip() or "gravada",
     }
 
     condicion = int(row.get("condicion_operacion", "1").strip() or "1")
