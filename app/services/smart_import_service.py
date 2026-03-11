@@ -337,12 +337,12 @@ def parse_file_to_rows(content: bytes, filename: str) -> tuple[list[dict], list[
             return [], [], f"Error al leer Excel: {exc}"
         if len(raw_rows) < 2:
             return [], [], "Archivo vacio."
-        headers = [str(h).strip() if h else f"col_{i}" for i, h in enumerate(raw_rows[0])]
+        headers = [str(h).strip() if h else chr(65 + i) if i < 26 else f"A{chr(65 + i - 26)}" for i, h in enumerate(raw_rows[0])]
         rows = []
         for raw in raw_rows[1:]:
             row = {}
             for i, val in enumerate(raw):
-                key = headers[i] if i < len(headers) else f"col_{i}"
+                key = headers[i] if i < len(headers) else (chr(65 + i) if i < 26 else f"A{chr(65 + i - 26)}")
                 row[key] = str(val).strip() if val is not None else ""
             if any(v for v in row.values()):
                 rows.append(row)

@@ -651,7 +651,7 @@ class DTEService:
         return token_info
 
     # Accounts with unlimited access (no quota enforcement)
-    BYPASS_EMAILS = {"hugovargas2003@msn.com"}
+    BYPASS_EMAILS = {"hugovargas2003@msn.com", "marivillamayo@gmail.com"}
 
     async def _resolve_billing_org(self, org_id: str) -> str:
         """Resolve billing org: if org has billing_org_id (pool), use that instead."""
