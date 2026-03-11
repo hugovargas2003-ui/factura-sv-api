@@ -109,7 +109,11 @@ class DTEBuilder:
         for i, item in enumerate(items, 1):
             precio = round(item["precio_unitario"], 2)
             cant = item.get("cantidad", 1)
-            vg = round(precio * cant, 2)
+            monto = round(precio * cant, 2)
+            tipo_v = item.get("tipo_venta", "gravada")  # gravada | exenta | no_sujeta
+            vg = monto if tipo_v == "gravada" else 0.0
+            ve = monto if tipo_v == "exenta" else 0.0
+            vns = monto if tipo_v == "no_sujeta" else 0.0
             cuerpo.append({
                 "numItem": i, "tipoItem": item.get("tipo_item", 2),
                 "numeroDocumento": None, "codigo": item.get("codigo"),
@@ -117,14 +121,16 @@ class DTEBuilder:
                 "uniMedida": item.get("unidad_medida", 59),
                 "descripcion": item["descripcion"], "precioUni": precio,
                 "montoDescu": round(float(item.get("descuento", 0)), 2),
-                "ventaNoSuj": 0.0, "ventaExenta": 0.0, "ventaGravada": vg,
+                "ventaNoSuj": vns, "ventaExenta": ve, "ventaGravada": vg,
                 "tributos": ["20"] if vg > 0 else None, "psv": 0.0, "noGravado": 0.0,
             })
         tg = round(sum(c["ventaGravada"] for c in cuerpo), 2)
+        te = round(sum(c["ventaExenta"] for c in cuerpo), 2)
+        tns = round(sum(c["ventaNoSuj"] for c in cuerpo), 2)
         iva = round(tg * 0.13, 2)
-        mt = round(tg + iva, 2)
+        mt = round(tg + te + tns + iva, 2)
         resumen = {
-            "totalNoSuj": 0.0, "totalExenta": 0.0, "totalGravada": tg,
+            "totalNoSuj": tns, "totalExenta": te, "totalGravada": tg,
             "subTotalVentas": tg, "descuNoSuj": 0.0, "descuExenta": 0.0,
             "descuGravada": 0.0, "porcentajeDescuento": 0.0, "totalDescu": 0.0,
             "tributos": [{"codigo": "20", "descripcion": "Impuesto al Valor Agregado 13%", "valor": iva}],
