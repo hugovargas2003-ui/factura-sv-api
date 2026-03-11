@@ -257,24 +257,21 @@ def _validate_receptor_row(
         result.add_error(row_num, "nombre", "Nombre es requerido.")
         return None
 
-    tipo_documento = row.get("tipo_documento", "36").strip()
+    tipo_documento = row.get("tipo_documento", "").strip() or "36"
     num_documento = row.get("num_documento", "").strip().replace("-", "")
 
-    if not num_documento:
-        result.add_error(row_num, "num_documento", "Número de documento es requerido.")
-        return None
-
-    # Validate document format
-    if tipo_documento == "36" and not _NIT_PATTERN.match(num_documento):
-        result.add_error(
-            row_num, "num_documento", f"NIT inválido: '{num_documento}'. Debe ser 14 dígitos sin guiones."
-        )
-        return None
-    if tipo_documento == "13" and not _DUI_PATTERN.match(num_documento):
-        result.add_error(
-            row_num, "num_documento", f"DUI inválido: '{num_documento}'. Debe ser 9 dígitos."
-        )
-        return None
+    # num_documento is optional — if provided, validate format
+    if num_documento:
+        if tipo_documento == "36" and not _NIT_PATTERN.match(num_documento):
+            result.add_error(
+                row_num, "num_documento", f"NIT inválido: '{num_documento}'. Debe ser 14 dígitos sin guiones."
+            )
+            return None
+        if tipo_documento == "13" and not _DUI_PATTERN.match(num_documento):
+            result.add_error(
+                row_num, "num_documento", f"DUI inválido: '{num_documento}'. Debe ser 9 dígitos."
+            )
+            return None
 
     # Optional fields — empty → None (MH rule)
     nrc = row.get("nrc", "").strip() or None
