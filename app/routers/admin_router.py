@@ -968,7 +968,7 @@ async def admin_cash_payment(
 ):
     """
     Admin registers a cash payment: credits added + auto-factura emitted.
-    Body: {"cantidad": 500, "amount_received": 56.65, "payment_ref": "Efectivo en oficina", "metodo": "cash"}
+    Body: {"cantidad": 500, "amount_received": 5.00, "payment_ref": "Efectivo en oficina", "metodo": "cash"}
     """
     from app.dependencies import get_encryption as _get_enc
     body = await request.json()

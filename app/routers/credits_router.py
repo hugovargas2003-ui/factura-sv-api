@@ -70,9 +70,9 @@ def get_pricing_params(supabase) -> dict:
     result = supabase.table("platform_config").select("key, value").in_("key", keys).execute()
     params = {row["key"]: row["value"] for row in (result.data or [])}
     return {
-        "p_base": float(params.get("pricing_p_base", "0.25")),
-        "p_min": float(params.get("pricing_p_min", "0.04")),
-        "k": float(params.get("pricing_k", "0.022")),
+        "p_base": float(params.get("pricing_p_base", "0.01")),
+        "p_min": float(params.get("pricing_p_min", "0.01")),
+        "k": float(params.get("pricing_k", "0")),
         "min_recharge": int(params.get("pricing_min_recharge", "10")),
         "alert_pct": int(params.get("pricing_alert_pct", "20")),
         "alert_critical": int(params.get("pricing_alert_critical", "5")),
@@ -83,15 +83,15 @@ def get_pricing_params(supabase) -> dict:
 
 def calculate_price(cantidad: int, p_base: float, p_min: float, k: float) -> tuple:
     """
-    Logarithmic pricing: precio = max(P_min, P_base - K * ln(cantidad))
+    Flat pricing: $0.01 per DTE — always.
+    p_base/p_min/k kept as params for backward compatibility but ignored.
     Returns (unit_price, total, discount_pct)
     """
     if cantidad <= 0:
-        return (p_base, 0.0, 0.0)
-    raw_price = p_base - k * math.log(cantidad)
-    unit_price = round(max(p_min, raw_price), 4)
+        return (0.01, 0.0, 0.0)
+    unit_price = 0.01
     total = round(unit_price * cantidad, 2)
-    discount_pct = round((1 - unit_price / p_base) * 100, 1)
+    discount_pct = 0.0
     return (unit_price, total, discount_pct)
 
 
