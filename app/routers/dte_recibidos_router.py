@@ -89,6 +89,22 @@ async def upload_dte_recibidos(
     for f in files:
         try:
             content = await f.read()
+            fname = (f.filename or "").lower()
+
+            # Detect non-JSON files and give helpful error
+            if fname.endswith(".pdf"):
+                errors.append({
+                    "file": f.filename,
+                    "error": "Archivo PDF no soportado. Suba el archivo JSON del DTE (el archivo .json que acompaña al PDF). Los archivos PDF no contienen los datos estructurados necesarios para el registro automático."
+                })
+                continue
+            if fname.endswith((".xlsx", ".xls", ".csv")):
+                errors.append({
+                    "file": f.filename,
+                    "error": "Formato no soportado. Suba archivos JSON individuales del DTE. Para importar múltiples DTEs desde CSV/XLSX use la página de Importar DTEs Históricos."
+                })
+                continue
+
             raw = json.loads(content.decode("utf-8"))
             parsed = parse_dte_json(raw)
 
