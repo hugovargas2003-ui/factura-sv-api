@@ -278,14 +278,38 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             raise HTTPException(400, "ambiente must be '00' or '01'")
         mh_url = "https://api.dtes.mh.gob.sv" if ambiente == "01" else "https://apitest.dtes.mh.gob.sv"
         org_id = user["org_id"]
+        existing = service.db.table("mh_credentials").select("id, certificate_encrypted").eq("org_id", org_id).execute()
+        has_cert = bool(existing.data and existing.data[0].get("certificate_encrypted"))
+        if existing.data:
+            service.db.table("mh_credentials").update({
+                "ambiente": ambiente, "mh_api_base_url": mh_url,
+            }).eq("org_id", org_id).execute()
+        else:
+            service.db.table("mh_credentials").insert({
+                "org_id": org_id, "ambiente": ambiente, "mh_api_base_url": mh_url,
+            }).execute()
+        if ambiente == "01":
+            label = "Producción — Emisión real con validez fiscal"
+        else:
+            if has_cert:
+                label = "Pruebas — Simulación con transmisión real al MH (sin validez fiscal)"
+            else:
+                label = "Pruebas — Simulación local sin certificado (estructura solamente)"
+        return {"success": True, "ambiente": ambiente, "mh_api_base_url": mh_url, "has_cert": has_cert, "message": f"Ambiente: {label}"}
+
+    @router.delete("/config/credentials")
+    async def delete_credentials(
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Eliminar credenciales y certificado del emisor."""
+        org_id = user["org_id"]
         existing = service.db.table("mh_credentials").select("id").eq("org_id", org_id).execute()
         if not existing.data:
             raise HTTPException(404, "No hay credenciales configuradas.")
-        service.db.table("mh_credentials").update({
-            "ambiente": ambiente, "mh_api_base_url": mh_url,
-        }).eq("org_id", org_id).execute()
-        label = "Produccion" if ambiente == "01" else "Pruebas"
-        return {"success": True, "ambiente": ambiente, "mh_api_base_url": mh_url, "message": f"Ambiente cambiado a {label}"}
+        service.db.table("mh_credentials").delete().eq("org_id", org_id).execute()
+        return {"success": True, "message": "Credenciales y certificado eliminados correctamente"}
+
 
     @router.get("/config/logo")
     async def get_logo(
