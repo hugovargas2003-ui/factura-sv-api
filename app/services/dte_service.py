@@ -187,10 +187,12 @@ class DTEService:
     ) -> dict:
         # 1. Validar credenciales y certificado
         creds = await self._get_credentials(org_id)
-        if not creds.get("certificate_encrypted"):
-            raise DTEServiceError("Suba su certificado .p12 antes de emitir", "NO_CERT")
-        if not creds.get("cert_password_encrypted"):
-            raise DTEServiceError("Configure la contraseña de su certificado .p12", "NO_CERT_PWD")
+        is_pruebas_mode = creds.get("ambiente") == "00"
+        if not is_pruebas_mode:
+            if not creds.get("certificate_encrypted"):
+                raise DTEServiceError("Suba su certificado .p12 antes de emitir", "NO_CERT")
+            if not creds.get("cert_password_encrypted"):
+                raise DTEServiceError("Configure la contraseña de su certificado .p12", "NO_CERT_PWD")
 
         # 2. Validar cuota mensual
         await self._check_quota(org_id)
@@ -226,6 +228,41 @@ class DTEService:
             dcl_params=dcl_params, cd_params=cd_params,
         )
         dte_dict = _sanitize_dte(dte_dict)
+
+        # 4b. Modo simulación: ambiente 00 sin certificado → validación local exitosa
+        is_pruebas = creds.get("ambiente") == "00"
+        has_cert = bool(creds.get("certificate_encrypted"))
+        if is_pruebas and not has_cert:
+            import uuid as _uuid
+            sim_sello = f"SIM-{_uuid.uuid4().hex[:16].upper()}"
+            sim_record = {
+                "org_id": org_id, "tipo_dte": tipo_dte,
+                "version": DTE_VERSIONS.get(tipo_dte, 1),
+                "numero_control": numero_control,
+                "codigo_generacion": codigo_gen,
+                "fecha_emision": dte_dict["identificacion"]["fecEmi"],
+                "hora_emision": dte_dict["identificacion"]["horEmi"],
+                "receptor_nombre": receptor.get("nombre"),
+                "receptor_nit": receptor.get("num_documento") or receptor.get("nit"),
+                "receptor_correo": receptor.get("correo"),
+                "monto_total": dte_dict.get("resumen", {}).get("montoTotalOperacion") or dte_dict.get("resumen", {}).get("totalPagar") or 0,
+                "estado": "simulado",
+                "sello_recepcion": sim_sello,
+                "json_original": dte_dict,
+                "ambiente": "00",
+                "emitted_via": emitted_via,
+                "created_by": user_id,
+            }
+            self.db.table("dtes").insert(sim_record).execute()
+            return {
+                "success": True,
+                "numero_control": numero_control,
+                "codigo_generacion": codigo_gen,
+                "sello_recepcion": sim_sello,
+                "estado": "simulado",
+                "mensaje": "SIMULACION EXITOSA - Estructura del DTE validada correctamente. Sin certificado, no se transmitio al MH.",
+            }
+
 
         # 5. Desencriptar .p12 y cargar en sign_engine
         cert_bytes = self.encryption.decrypt(
