@@ -56,7 +56,7 @@ def check_plan_status(supabase, org_id: str) -> dict:
             "Su cuenta está suspendida. Contacte soporte para reactivar."
         )
 
-    # 2. Check trial expiration (free plan with trialing status)
+    # 2. Check plan expiration (paid plans only — trial credits never expire)
     plan_status = data.get("plan_status", "active")
     expires_at = data.get("plan_expires_at")
     payment_method = data.get("payment_method", "stripe")
@@ -69,21 +69,7 @@ def check_plan_status(supabase, org_id: str) -> dict:
         if exp_dt < datetime.utcnow():
             plan = data.get("plan", "free")
 
-            if plan == "free" or plan_status == "trialing":
-                # Trial expired — block emission completely
-                supabase.table("organizations").update({
-                    "plan_status": "expired",
-                    "payment_notes": f"Prueba gratuita expirada {exp_dt.date()}.",
-                }).eq("id", org_id).execute()
-
-                logger.warning(f"Trial expired for org {org_id}")
-
-                raise HTTPException(
-                    403,
-                    "Su periodo de prueba de 3 días ha finalizado. "
-                    "Seleccione un plan para continuar emitiendo DTEs. "
-                    "Vaya a Planes en su panel de control."
-                )
+                pass  # Trial credits never expire — no block for free/trialing
             else:
                 # Paid plan expired — downgrade to blocked
                 supabase.table("organizations").update({

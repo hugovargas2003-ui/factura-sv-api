@@ -688,22 +688,8 @@ class DTEService:
         plan = org.get("plan", "free")
         balance = org.get("credit_balance", 0)
 
-        # 1. Check trial expiration
+        # 1. Trial credits never expire — skip trial check
         plan_status = org.get("plan_status", "active")
-        expires_at = org.get("plan_expires_at")
-        if plan == "free" and plan_status == "trialing" and expires_at:
-            from datetime import datetime
-            exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-            if exp_dt.tzinfo:
-                exp_dt = exp_dt.replace(tzinfo=None)
-            if exp_dt < datetime.utcnow():
-                self.db.table("organizations").update({
-                    "plan_status": "expired",
-                }).eq("id", org_id).execute()
-                raise DTEServiceError(
-                    "Su periodo de prueba de 3 dias ha finalizado. "
-                    "Recargue creditos DTE para continuar emitiendo.",
-                    "TRIAL_EXPIRED")
 
         if plan_status == "expired":
             raise DTEServiceError(
