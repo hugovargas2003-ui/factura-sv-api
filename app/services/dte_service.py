@@ -256,10 +256,12 @@ class DTEService:
             self.db.table("dtes").insert(sim_record).execute()
             return {
                 "success": True,
+                "dte_id": sim_record.get("id", ""),
                 "numero_control": numero_control,
                 "codigo_generacion": codigo_gen,
                 "sello_recepcion": sim_sello,
                 "estado": "simulado",
+                "fecha_emision": dte_dict["identificacion"]["fecEmi"],
                 "mensaje": "SIMULACION EXITOSA - Estructura del DTE validada correctamente. Sin certificado, no se transmitio al MH.",
             }
 
