@@ -20,7 +20,14 @@ logger = logging.getLogger("factura-sv.email-config")
 
 router = APIRouter(prefix="/config/email", tags=["Email Config"])
 
-_enc = EncryptionService()
+_enc: EncryptionService | None = None
+
+
+def _get_enc() -> EncryptionService:
+    global _enc
+    if _enc is None:
+        _enc = EncryptionService()
+    return _enc
 
 
 @router.get("")
@@ -63,7 +70,7 @@ async def update_email_config(
     }
 
     if body.get("smtp_password"):
-        data["smtp_password_encrypted"] = _enc.encrypt_string(
+        data["smtp_password_encrypted"] = _get_enc().encrypt_string(
             body["smtp_password"], org_id
         ).decode("utf-8")
 
@@ -83,7 +90,7 @@ async def test_email_config(
         raise HTTPException(400, "No hay configuración SMTP. Configure primero.")
 
     cfg = result.data[0]
-    password = _enc.decrypt_string(
+    password = _get_enc().decrypt_string(
         cfg["smtp_password_encrypted"].encode("utf-8"), org_id
     )
 

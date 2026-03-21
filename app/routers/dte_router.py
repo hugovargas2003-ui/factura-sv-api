@@ -718,7 +718,7 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
     @router.post("/smart-import/analyze")
     async def analyze_import_file(
         file: UploadFile = File(...),
-        import_type: str = Query(..., regex="^(productos|receptores)$"),
+        import_type: str = Query(..., pattern="^(productos|receptores)$"),
         user=Depends(get_current_user),
     ):
         """
@@ -751,7 +751,7 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
     @router.post("/smart-import/execute")
     async def execute_smart_import(
         file: UploadFile = File(...),
-        import_type: str = Query(..., regex="^(productos|receptores)$"),
+        import_type: str = Query(..., pattern="^(productos|receptores)$"),
         mapping_json: str = Query(None, description="JSON string of custom mapping override"),
         service=Depends(get_dte_service),
         user=Depends(get_current_user),
@@ -782,7 +782,7 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
     @router.post("/smart-import/one-step")
     async def smart_import_one_step(
         file: UploadFile = File(...),
-        import_type: str = Query(..., regex="^(productos|receptores)$"),
+        import_type: str = Query(..., pattern="^(productos|receptores)$"),
         service=Depends(get_dte_service),
         user=Depends(get_current_user),
     ):
@@ -859,6 +859,61 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             io.BytesIO(file_bytes),
             media_type=media_type,
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    # ── EXPORT ZIP (masivo PDFs) ──
+
+    @router.get("/dte/export-zip")
+    async def export_dtes_zip(
+        date_from: Optional[str] = Query(None, alias="from", pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        date_to: Optional[str] = Query(None, alias="to", pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        tipo_dte: Optional[str] = Query(None),
+        estado: Optional[str] = Query(None),
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Exportar PDFs individuales de DTEs en un archivo ZIP."""
+        import zipfile
+
+        # Fetch matching DTEs
+        query = service.db.table("dte_emitidos").select(
+            "id, codigo_generacion, numero_control, tipo_dte, fecha_emision, receptor_nombre"
+        ).eq("org_id", user["org_id"]).eq("estado", estado or "procesado")
+
+        if tipo_dte:
+            query = query.eq("tipo_dte", tipo_dte)
+        if date_from:
+            query = query.gte("fecha_emision", date_from)
+        if date_to:
+            query = query.lte("fecha_emision", date_to)
+
+        query = query.order("fecha_emision", desc=True).limit(200)
+        result = query.execute()
+        dtes = result.data or []
+
+        if not dtes:
+            raise HTTPException(404, "No se encontraron DTEs para exportar")
+
+        # Generate ZIP with individual PDFs
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for dte in dtes:
+                try:
+                    pdf_bytes = await service.generate_pdf(dte["codigo_generacion"])
+                    if pdf_bytes:
+                        safe_name = (dte.get("numero_control") or dte["codigo_generacion"][:8]).replace("/", "-")
+                        filename = f"{dte['tipo_dte']}_{safe_name}_{dte.get('fecha_emision', '')}.pdf"
+                        zf.writestr(filename, pdf_bytes)
+                except Exception:
+                    continue  # Skip DTEs that fail PDF generation
+
+        zip_buffer.seek(0)
+        zip_filename = f"dtes_{date_from or 'all'}_{date_to or 'all'}.zip"
+
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{zip_filename}"'},
         )
 
         # ── API KEYS (S5-1) ──
@@ -1202,6 +1257,53 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         if not result.data:
             raise HTTPException(404, "DTE no encontrado")
         return {"success": True, "fecha_vencimiento": fecha}
+
+    @router.get("/cxc/export")
+    async def export_cxc(
+        format: str = Query("xlsx"),
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Exportar CxC como XLSX."""
+        from openpyxl import Workbook
+
+        cxc_data = await cxc_service.get_cxc_list(
+            service.db, user["org_id"], per_page=1000
+        )
+        items = cxc_data.get("data", [])
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Cuentas por Cobrar"
+        headers = ["Tipo DTE", "Nº Control", "Receptor", "NIT", "Fecha Emisión",
+                    "Monto Total", "Monto Pagado", "Saldo", "Estado", "Vencimiento"]
+        ws.append(headers)
+
+        for item in items:
+            saldo = (item.get("monto_total", 0) or 0) - (item.get("monto_pagado", 0) or 0)
+            ws.append([
+                item.get("tipo_dte", ""),
+                item.get("numero_control", ""),
+                item.get("receptor_nombre", ""),
+                item.get("receptor_nit", ""),
+                item.get("fecha_emision", ""),
+                item.get("monto_total", 0),
+                item.get("monto_pagado", 0),
+                round(saldo, 2),
+                item.get("estado_pago", ""),
+                item.get("fecha_vencimiento", ""),
+            ])
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        filename = f"cxc_{date.today().isoformat()}.xlsx"
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     # ── MULTI-ORGANIZACIÓN (T1-01) ──
 
@@ -1971,6 +2073,32 @@ Total a Pagar: $1,412.50"""
         except ValueError as e:
             raise HTTPException(400, detail=str(e))
 
+
+    # ── Webhook Deliveries ─────────────────────────────────────
+
+    @router.get("/webhooks/deliveries")
+    async def list_webhook_deliveries(
+        webhook_id: str = Query(None),
+        limit: int = Query(50, ge=1, le=200),
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """List recent webhook delivery attempts."""
+        from app.services.webhook_delivery_service import list_deliveries
+        return await list_deliveries(
+            service.db, user["org_id"], limit=limit, webhook_id=webhook_id
+        )
+
+    @router.post("/webhooks/deliveries/{delivery_id}/retry")
+    async def retry_webhook_delivery(
+        delivery_id: str,
+        service=Depends(get_dte_service), user=Depends(get_current_user),
+    ):
+        """Manually retry a failed webhook delivery."""
+        from app.services.webhook_delivery_service import retry_delivery
+        try:
+            return await retry_delivery(service.db, user["org_id"], delivery_id)
+        except ValueError as e:
+            raise HTTPException(400, detail=str(e))
 
     # ── Audit Log ────────────────────────────────────────────────
 

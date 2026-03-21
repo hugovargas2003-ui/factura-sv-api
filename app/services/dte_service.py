@@ -22,7 +22,7 @@ from app.modules.sign_engine import sign_engine, CertificateSession
 from app.modules.transmit_service import transmit_service
 from app.modules.invalidation_service import invalidation_service
 from app.mh.dte_builder import DTEBuilder
-from app.services.inventory_service import deduct_stock_for_dte
+from app.services.inventory_service import deduct_stock_for_dte, register_movement
 from app.services.sucursal_service import resolve_sucursal_codes
 
 
@@ -367,7 +367,6 @@ class DTEService:
                     )
             except Exception as inv_err:
                 logger.error(f"Inventory deduction failed (non-blocking): {inv_err}")
-                # TODO: revert inventory on invalidation
 
         # 11. Enviar PDF + JSON al receptor por email (solo si PROCESADO)
         if estado == "procesado" and receptor.get("correo"):
@@ -610,6 +609,12 @@ class DTEService:
 
         if mh_result.status == "PROCESADO":
             self.db.table("dtes").update({"estado": "invalidado"}).eq("id", dte_id).execute()
+            # Revert inventory movements (non-blocking, same pattern as deduction)
+            if dte.get("tipo_dte") in ("01", "03", "11", "14"):
+                try:
+                    await self._revert_inventory(org_id, dte.get("numero_control", ""), user_id)
+                except Exception as inv_err:
+                    logger.error(f"Inventory reversal failed (non-blocking): {inv_err}")
 
         return {
             "success": mh_result.status == "PROCESADO",
@@ -677,16 +682,36 @@ class DTEService:
         return result.data
 
     async def _authenticate_mh(self, org_id: str, creds: dict) -> TokenInfo:
+        # 1. In-memory cache (fastest)
         cached = self._token_cache.get(org_id)
         if cached and not cached.is_expired:
             return cached
 
+        # 2. Redis cache (survives restarts)
+        from app.services.cache_service import get_cached_mh_token, cache_mh_token
+        redis_cached = get_cached_mh_token(org_id)
+        if redis_cached:
+            from app.core.config import settings
+            token_info = TokenInfo(
+                token=redis_cached["token"],
+                nit=redis_cached["nit"],
+                environment=settings.mh_environment,
+            )
+            if not token_info.is_expired:
+                self._token_cache[org_id] = token_info
+                return token_info
+
+        # 3. Authenticate with MH
         nit = creds["mh_nit_auth"] or creds["nit"]
         password = self.encryption.decrypt_string(
             bytes.fromhex(creds["mh_password_encrypted"]), org_id)
 
         token_info = await auth_bridge.authenticate(nit=nit, password=password)
         self._token_cache[org_id] = token_info
+
+        # Cache in Redis for 23h
+        cache_mh_token(org_id, {"token": token_info.token, "nit": token_info.nit})
+
         return token_info
 
     # Accounts with unlimited access (no quota enforcement)
@@ -792,6 +817,27 @@ class DTEService:
             logger.info(f"Credit deducted: org={org_id}{pool_tag} balance={new_balance}")
         except Exception as e:
             logger.error(f"Credit deduction failed: {e}")
+
+    async def _revert_inventory(self, org_id: str, numero_control: str, user_id: str):
+        """Revert inventory movements when a DTE is invalidated (non-blocking)."""
+        movements = self.db.table("inventory_movements").select(
+            "id, producto_id, cantidad"
+        ).eq("org_id", org_id).eq("referencia", f"DTE {numero_control}").eq(
+            "tipo", "dte_emitido"
+        ).execute()
+        if not movements.data:
+            return
+        for mov in movements.data:
+            await register_movement(
+                supabase=self.db,
+                org_id=org_id,
+                producto_id=mov["producto_id"],
+                tipo="entrada",
+                cantidad=float(mov["cantidad"]),
+                referencia=f"Invalidación {numero_control}",
+                created_by=user_id,
+            )
+        logger.info(f"Inventory reverted: {len(movements.data)} movements for {numero_control}")
 
     async def _autosave_receptor(self, org_id: str, receptor: dict):
         """Auto-save receptor to directorio de frecuentes after successful DTE."""

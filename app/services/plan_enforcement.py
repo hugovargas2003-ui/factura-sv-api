@@ -68,7 +68,7 @@ def check_plan_status(supabase, org_id: str) -> dict:
 
         if exp_dt < datetime.utcnow():
             plan = data.get("plan", "free")
-
+            if plan in ("free", "trialing"):
                 pass  # Trial credits never expire — no block for free/trialing
             else:
                 # Paid plan expired — downgrade to blocked
