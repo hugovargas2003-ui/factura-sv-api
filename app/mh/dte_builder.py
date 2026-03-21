@@ -323,8 +323,7 @@ class DTEBuilder:
     def _build_cl(self, **kw) -> dict:
         """Comprobante de Liquidación (08) v1 - Schema: fe-cl-v1.json
         Items are document references, NOT products.
-        TOP: NO documentoRelacionado/otrosDocumentos/ventaTercero.
-        # KNOWN: documentoRelacionado may be needed by MH"""
+        TOP: documentoRelacionado = None (MH schema v1). No otrosDocumentos/ventaTercero."""
         items, receptor = kw["items"], kw["receptor"]
         ref = kw.get("dte_referencia") or {}
         cuerpo = []
@@ -358,6 +357,7 @@ class DTEBuilder:
         dte = self._ident(kw, "08")
         dte["identificacion"].pop("tipoContingencia", None)
         dte["identificacion"].pop("motivoContin", None)
+        dte["documentoRelacionado"] = None
         dte["emisor"] = self._emisor_std()
         dte["receptor"] = self._rec_ccf(receptor)
         dte["cuerpoDocumento"] = cuerpo
@@ -387,8 +387,7 @@ class DTEBuilder:
             "valorOperaciones": val_op, "montoSinPercepcion": 0.0,
             "descripSinPercepcion": None, "subTotal": val_op, "iva": iva,
             "montoSujetoPercepcion": msp, "ivaPercibido": ip,
-            # KNOWN: porcentComision should be int, not float
-            "comision": com, "porcentComision": round(float(pct), 2), "ivaComision": ic,
+            "comision": com, "porcentComision": int(pct), "ivaComision": ic,
             "liquidoApagar": liq, "totalLetras": self._monto_letras(liq),
             "observaciones": kw.get("observaciones"),
         }
