@@ -7,7 +7,7 @@ Solo accesible por usuarios con role "admin".
 from fastapi import Request,  APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.dependencies import get_current_user, get_supabase
 from supabase import Client as SupabaseClient
@@ -92,6 +92,54 @@ async def get_platform_stats(
         "orgs_by_status": statuses,
         "dtes_by_status": dte_by_status,
         "dtes_by_type": dte_by_type,
+    }
+
+
+@router.get("/metrics")
+async def get_production_metrics(
+    admin: dict = Depends(require_admin),
+    db: SupabaseClient = Depends(get_supabase),
+):
+    """Real-time production metrics for monitoring dashboards."""
+    now = datetime.now()
+    today = now.date().isoformat()
+    week_ago = (now - timedelta(days=7)).isoformat()
+
+    # DTEs today
+    dtes_today = db.table("dtes").select("id", count="exact").gte(
+        "created_at", today
+    ).execute()
+
+    # Errors today
+    errors_today = db.table("dtes").select("id", count="exact").eq(
+        "estado", "rechazado"
+    ).gte("created_at", today).execute()
+
+    # Active orgs (emitted this week)
+    active_orgs_result = db.table("dtes").select("org_id").gte(
+        "created_at", week_ago
+    ).execute()
+    active_org_ids = set(d["org_id"] for d in (active_orgs_result.data or []))
+
+    # Webhook delivery stats
+    webhook_pending = db.table("webhook_deliveries").select("id", count="exact").eq(
+        "status", "pending"
+    ).execute()
+    webhook_dead = db.table("webhook_deliveries").select("id", count="exact").eq(
+        "status", "dead"
+    ).execute()
+
+    dtes_count = dtes_today.count or 0
+    errors_count = errors_today.count or 0
+
+    return {
+        "dtes_today": dtes_count,
+        "errors_today": errors_count,
+        "error_rate": round(errors_count / max(dtes_count, 1) * 100, 2),
+        "active_orgs_7d": len(active_org_ids),
+        "webhooks_pending": webhook_pending.count or 0,
+        "webhooks_dead": webhook_dead.count or 0,
+        "timestamp": now.isoformat(),
     }
 
 
@@ -529,10 +577,11 @@ class AdminCreateOrg(BaseModel):
     owner_name: Optional[str] = Field(None, description="Nombre completo del dueño")
     owner_password: Optional[str] = Field(None, min_length=6, description="Contraseña temporal")
     # Payment info
-    payment_method: Optional[str] = Field("free", pattern="^(free|cash|transfer|stripe)$")
+    payment_method: Optional[str] = Field("free", pattern="^(free|cash|transfer|stripe|cortesia)$")
     months: Optional[int] = Field(None, ge=1, le=36)
     amount: Optional[float] = Field(None, ge=0)
     admin_notes: Optional[str] = None
+    initial_credits: Optional[int] = Field(None, ge=0, le=100000, description="Créditos de cortesía iniciales")
 
 
 class AdminCreateUser(BaseModel):
@@ -585,6 +634,9 @@ async def admin_create_organization(
         expires_at = (now + timedelta(days=body.months * 30)).isoformat()
 
     # 3. Create organization
+    import secrets
+    link_code = f"FSV-{secrets.token_hex(2).upper()}-{secrets.token_hex(2).upper()}"
+
     org_data = {
         "name": body.name,
         "nit": body.nit or "",
@@ -595,6 +647,9 @@ async def admin_create_organization(
         "payment_method": body.payment_method or "free",
         "monthly_quota": PLAN_DTE_LIMITS.get(body.plan, 50),
         "max_companies": 999,
+        "credit_balance": body.initial_credits or 0,
+        "link_code": link_code,
+        "link_code_enabled": True,
         "created_at": now.isoformat(),
         "updated_at": now.isoformat(),
     }
@@ -628,16 +683,18 @@ async def admin_create_organization(
     # 4. Create owner user if email provided
     if body.owner_email:
         try:
+            temp_password = body.owner_password or secrets.token_urlsafe(12)
             user_result = _admin_create_auth_user(
                 db=db,
                 email=body.owner_email,
-                password=body.owner_password or "FacSV2026!",
+                password=temp_password,
                 full_name=body.owner_name or body.name,
                 org_id=org_id,
                 role="admin",
             )
             response["user_created"] = True
             response["user"] = user_result
+            response["temp_password"] = temp_password
         except Exception as e:
             response["user_error"] = str(e)
             response["user_created"] = False
@@ -662,6 +719,21 @@ async def admin_create_organization(
         except Exception:
             pass  # Non-blocking
 
+    # 6. Log initial credits as cortesía transaction
+    if body.initial_credits and body.initial_credits > 0:
+        try:
+            db.table("credit_transactions").insert({
+                "org_id": org_id,
+                "type": "cortesia",
+                "amount": body.initial_credits,
+                "balance": body.initial_credits,
+                "description": f"Créditos de bienvenida (admin onboarding)",
+                "admin_notes": f"Creado por {admin.get('email', 'admin')}",
+            }).execute()
+        except Exception:
+            pass  # Non-blocking
+
+    response["link_code"] = link_code
     return response
 
 

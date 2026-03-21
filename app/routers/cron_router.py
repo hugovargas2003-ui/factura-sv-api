@@ -5,6 +5,7 @@ Location: app/routers/cron_router.py
 
 Endpoints:
   GET /api/v1/cron/check-expirations?key=<SECRET> — Send expiry notifications
+  GET /api/v1/cron/check-credits?key=<SECRET> — Send low credit balance alerts
   
 Security: Protected by CRON_SECRET query param (not JWT).
 Designed to be called by Railway cron, external scheduler, or manually.
@@ -45,6 +46,37 @@ async def check_expirations(key: str = Query(..., description="Cron secret key")
         "summary": {
             "organizations_checked": results["checked"],
             "emails_sent": results["sent"],
+            "skipped": results["skipped"],
+            "errors": results["errors"],
+        },
+        "details": results["details"],
+    }
+
+
+@router.get("/check-credits")
+async def check_credits(key: str = Query(..., description="Cron secret key")):
+    """
+    Check all organizations for low credit balance and send alerts.
+
+    Call daily via cron or manually:
+      GET /api/v1/cron/check-credits?key=fsv-cron-2026
+    """
+    if key != CRON_SECRET:
+        raise HTTPException(403, "Invalid cron key")
+
+    from app.dependencies import get_supabase
+    from app.services.credit_alert_service import check_credit_alerts
+
+    supabase = get_supabase()
+    results = await check_credit_alerts(supabase)
+
+    logger.info(f"Cron check-credits: {results['sent']} sent, {results['errors']} errors")
+
+    return {
+        "success": True,
+        "summary": {
+            "organizations_checked": results["checked"],
+            "alerts_sent": results["sent"],
             "skipped": results["skipped"],
             "errors": results["errors"],
         },
