@@ -54,6 +54,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger("factura-sv")
 
+# ── Sentry error tracking ──
+_sentry_dsn = os.getenv("SENTRY_DSN")
+if _sentry_dsn:
+    try:
+        import sentry_sdk
+        sentry_sdk.init(
+            dsn=_sentry_dsn,
+            traces_sample_rate=0.1,
+            environment=os.getenv("MH_ENVIRONMENT", "production"),
+        )
+        logger.info("Sentry error tracking initialized")
+    except ImportError:
+        logger.warning("sentry-sdk not installed, error tracking disabled")
+
 
 # ─────────────────────────────────────────────────────────────
 # IN-MEMORY SESSION STORE
@@ -119,17 +133,32 @@ async def _cleanup_stale_sessions():
 # APP LIFECYCLE
 # ─────────────────────────────────────────────────────────────
 
+async def _process_webhook_retries():
+    """Background task: process webhook delivery retries every 30s."""
+    while True:
+        await asyncio.sleep(30)
+        try:
+            from app.dependencies import get_supabase
+            from app.services.webhook_delivery_service import process_retry_queue
+            supabase = get_supabase()
+            await process_retry_queue(supabase)
+        except Exception as e:
+            logger.debug(f"Webhook retry processor: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(f"🚀 FACTURA-SV v{settings.app_version} starting...")
     logger.info(f"   Environment: {settings.mh_environment.value}")
     logger.info(f"   MH Auth URL: {get_mh_url('auth')}")
     logger.info(f"   MH Recepción URL: {get_mh_url('recepcion_dte')}")
-    # Start background session cleanup
+    # Start background tasks
     cleanup_task = asyncio.create_task(_cleanup_stale_sessions())
+    webhook_retry_task = asyncio.create_task(_process_webhook_retries())
     yield
-    # Shutdown: cancel cleanup and destroy all sessions
+    # Shutdown: cancel tasks and destroy all sessions
     cleanup_task.cancel()
+    webhook_retry_task.cancel()
     for sid, session in _sessions.items():
         if session.get("cert"):
             session["cert"].destroy()
@@ -188,8 +217,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Requested-With"],
 )
 
 # Rate limiter setup
