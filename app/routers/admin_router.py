@@ -649,7 +649,7 @@ async def admin_create_organization(
         "max_companies": 999,
         "credit_balance": body.initial_credits or 0,
         "link_code": link_code,
-        "link_code_enabled": True,
+        "link_code_active": True,
         "created_at": now.isoformat(),
         "updated_at": now.isoformat(),
     }
@@ -722,13 +722,14 @@ async def admin_create_organization(
     # 6. Log initial credits as cortesía transaction
     if body.initial_credits and body.initial_credits > 0:
         try:
+            owner = db.table("users").select("email").eq("org_id", org_id).limit(1).execute()
+            owner_email = owner.data[0]["email"] if owner.data else "admin@factura-sv.com"
             db.table("credit_transactions").insert({
-                "org_id": org_id,
+                "user_email": owner_email,
                 "type": "cortesia",
                 "amount": body.initial_credits,
-                "balance": body.initial_credits,
-                "description": f"Créditos de bienvenida (admin onboarding)",
-                "admin_notes": f"Creado por {admin.get('email', 'admin')}",
+                "balance_after": body.initial_credits,
+                "description": f"Créditos de bienvenida (admin onboarding). Creado por {admin.get('email', 'admin')}",
             }).execute()
         except Exception:
             pass  # Non-blocking
@@ -1014,14 +1015,14 @@ async def admin_manage_credits(
 
     supabase.table("organizations").update({"credit_balance": new_balance}).eq("id", org_id).execute()
 
+    owner = supabase.table("users").select("email").eq("org_id", org_id).limit(1).execute()
+    owner_email = owner.data[0]["email"] if owner.data else "admin@factura-sv.com"
     supabase.table("credit_transactions").insert({
-        "org_id": org_id,
+        "user_email": owner_email,
         "type": "purchase" if amount > 0 else "usage",
         "amount": amount,
-        "balance": new_balance,
-        "unit_price": 0,
-        "total_paid": 0,
-        "payment_ref": f"admin:{reason}",
+        "balance_after": new_balance,
+        "description": f"Admin adjustment: {reason}",
     }).execute()
 
     return {"previous_balance": current, "adjustment": amount, "new_balance": new_balance, "reason": reason}
@@ -1066,14 +1067,14 @@ async def admin_cash_payment(
     supabase.table("organizations").update({"credit_balance": new_balance}).eq("id", org_id).execute()
 
     # 3. Record transaction
+    owner = supabase.table("users").select("email").eq("org_id", org_id).limit(1).execute()
+    owner_email = owner.data[0]["email"] if owner.data else "admin@factura-sv.com"
     supabase.table("credit_transactions").insert({
-        "org_id": org_id,
+        "user_email": owner_email,
         "type": "purchase",
         "amount": cantidad,
-        "balance": new_balance,
-        "unit_price": round(amount_received / cantidad, 4) if cantidad > 0 else 0,
-        "total_paid": amount_received,
-        "payment_ref": payment_ref,
+        "balance_after": new_balance,
+        "description": f"Cash payment: {cantidad} credits, ${amount_received:.2f} received. Ref: {payment_ref}",
     }).execute()
 
     # 4. Auto-emit invoice (non-blocking)
@@ -1170,13 +1171,14 @@ async def admin_verify_transfer(
             }).eq("id", org_id_tx).execute()
 
             # Record reversal transaction
+            owner = supabase.table("users").select("email").eq("org_id", org_id_tx).limit(1).execute()
+            owner_email = owner.data[0]["email"] if owner.data else "admin@factura-sv.com"
             supabase.table("credit_transactions").insert({
-                "org_id": org_id_tx,
+                "user_email": owner_email,
                 "type": "reversal",
                 "amount": -credits_to_reverse,
-                "balance": new_balance,
-                "payment_ref": f"fraud_reversal:{transaction_id}",
-                "admin_notes": f"Transferencia no verificada. {admin_notes}",
+                "balance_after": new_balance,
+                "description": f"Fraud reversal for tx:{transaction_id}. Transferencia no verificada. {admin_notes}",
             }).execute()
 
         # Mark original transaction as fraudulent

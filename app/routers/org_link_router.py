@@ -82,7 +82,7 @@ async def get_link_code(
     await _require_owner_or_admin(user, db)
 
     org = db.table("organizations").select(
-        "id, name, link_code, link_code_enabled"
+        "id, name, link_code, link_code_active"
     ).eq("id", user["org_id"]).single().execute()
 
     if not org.data:
@@ -93,7 +93,7 @@ async def get_link_code(
         code = _generate_link_code()
         db.table("organizations").update({
             "link_code": code,
-            "link_code_enabled": True,
+            "link_code_active": True,
         }).eq("id", user["org_id"]).execute()
         return {
             "code": code,
@@ -103,7 +103,7 @@ async def get_link_code(
 
     return {
         "code": org.data["link_code"],
-        "enabled": org.data.get("link_code_enabled", True),
+        "enabled": org.data.get("link_code_active", True),
         "org_name": org.data["name"],
     }
 
@@ -119,7 +119,7 @@ async def regenerate_code(
     code = _generate_link_code()
     db.table("organizations").update({
         "link_code": code,
-        "link_code_enabled": True,
+        "link_code_active": True,
     }).eq("id", user["org_id"]).execute()
 
     logger.info(f"Link code regenerated for org {user['org_id'][:8]}...")
@@ -136,7 +136,7 @@ async def toggle_code(
     await _require_owner_or_admin(user, db)
 
     db.table("organizations").update({
-        "link_code_enabled": body.enabled,
+        "link_code_active": body.enabled,
     }).eq("id", user["org_id"]).execute()
 
     return {"enabled": body.enabled}
@@ -153,7 +153,7 @@ async def redeem_code(
 
     # Find org by code
     org = db.table("organizations").select(
-        "id, name, link_code_enabled"
+        "id, name, link_code_active"
     ).eq("link_code", code).execute()
 
     if not org.data:
@@ -161,7 +161,7 @@ async def redeem_code(
 
     target_org = org.data[0]
 
-    if not target_org.get("link_code_enabled", True):
+    if not target_org.get("link_code_active", True):
         raise HTTPException(400, "Este codigo esta desactivado por el dueño de la empresa")
 
     target_org_id = target_org["id"]

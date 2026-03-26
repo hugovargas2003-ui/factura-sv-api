@@ -70,9 +70,9 @@ def get_pricing_params(supabase) -> dict:
     result = supabase.table("platform_config").select("key, value").in_("key", keys).execute()
     params = {row["key"]: row["value"] for row in (result.data or [])}
     return {
-        "p_base": float(params.get("pricing_p_base", "0.01")),
-        "p_min": float(params.get("pricing_p_min", "0.01")),
-        "k": float(params.get("pricing_k", "0")),
+        "p_base": float(params.get("pricing_p_base", "0.13")),
+        "p_min": float(params.get("pricing_p_min", "0.03")),
+        "k": float(params.get("pricing_k", "0.013")),
         "min_recharge": int(params.get("pricing_min_recharge", "10")),
         "alert_pct": int(params.get("pricing_alert_pct", "20")),
         "alert_critical": int(params.get("pricing_alert_critical", "5")),
@@ -83,15 +83,17 @@ def get_pricing_params(supabase) -> dict:
 
 def calculate_price(cantidad: int, p_base: float, p_min: float, k: float) -> tuple:
     """
-    Flat pricing: $0.01 per DTE — always.
-    p_base/p_min/k kept as params for backward compatibility but ignored.
+    Logarithmic pricing with floor.
+    $0.07/DTE (100 credits) → $0.03/DTE (2,200+ credits).
+    Floor: $0.03/DTE for any quantity >= 2,200.
     Returns (unit_price, total, discount_pct)
     """
+    import math
     if cantidad <= 0:
-        return (0.01, 0.0, 0.0)
-    unit_price = 0.01
+        return (0.07, 0.0, 0.0)
+    unit_price = round(max(p_min, p_base - k * math.log(cantidad)), 4)
     total = round(unit_price * cantidad, 2)
-    discount_pct = 0.0
+    discount_pct = round((1 - unit_price / 0.0701) * 100, 1) if unit_price < 0.0701 else 0.0
     return (unit_price, total, discount_pct)
 
 
@@ -194,18 +196,19 @@ async def purchase_credits(
         "credit_balance": new_balance,
     }).eq("id", org_id).execute()
 
+    payment_ref = req.payment_ref or f"{req.metodo_pago}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+
     # Record transaction
     tx = supabase.table("credit_transactions").insert({
-        "org_id": org_id,
+        "user_email": user["email"],
         "type": "purchase",
         "amount": req.cantidad,
-        "balance": new_balance,
-        "unit_price": unit_price,
-        "total_paid": total,
-        "payment_ref": payment_ref,
+        "balance_after": new_balance,
+        "description": f"unit=${unit_price:.4f} total=${total:.2f} ref={payment_ref}",
+        "service": "credits_purchase",
+        "stripe_payment_id": req.payment_ref if req.payment_ref else None,
     }).execute()
 
-    payment_ref = req.payment_ref or f"{req.metodo_pago}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
     logger.info(f"Credits purchased: org={org_id} qty={req.cantidad} total=${total} balance={new_balance}")
 
     # ── Auto-emit CCF/Factura for the purchase ──

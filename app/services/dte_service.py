@@ -804,13 +804,16 @@ class DTEService:
                 "credit_balance": new_balance,
             }).eq("id", billing_id).execute()
 
+            owner_email = owner.data[0]["email"] if owner.data else None
+            pool_desc = f"DTE {dte_id} emit_by:{org_id}" if billing_id != org_id else f"DTE {dte_id}"
             self.db.table("credit_transactions").insert({
-                "org_id": billing_id,
+                "user_email": owner_email,
                 "type": "usage",
                 "amount": -1,
-                "balance": new_balance,
-                "dte_id": dte_id,
-                "admin_notes": f"emit_by:{org_id}" if billing_id != org_id else None,
+                "balance_after": new_balance,
+                "description": pool_desc,
+                "service": "dte_emission",
+                "job_id": dte_id,
             }).execute()
 
             pool_tag = f" (pool:{billing_id})" if billing_id != org_id else ""
