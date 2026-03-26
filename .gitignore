@@ -9,5 +9,6 @@ __pycache__/
 factura-sv-sprint1.tar.gz
 sprint1/
 *.bak
+*.bak2
 *.backup
 *.old

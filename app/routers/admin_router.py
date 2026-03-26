@@ -1139,39 +1139,34 @@ async def admin_verify_transfer(
     now_str = datetime.utcnow().isoformat()
 
     if verified:
-        # Mark as verified
+        # Log verification as a description update (append-only ledger)
         supabase.table("credit_transactions").update({
-            "verified": True,
-            "verified_at": now_str,
-            "verified_by": admin["user_id"],
-            "bank_ref": bank_ref,
-            "admin_notes": admin_notes,
+            "description": f"Verificada por admin {admin.get('email','')} el {now_str}. Ref bancaria: {bank_ref}. {admin_notes}".strip(),
         }).eq("id", transaction_id).execute()
 
         return {
             "status": "verified",
             "transaction_id": transaction_id,
-            "org_id": tx_data["org_id"],
             "amount": tx_data["amount"],
             "message": f"Transferencia verificada. Ref bancaria: {bank_ref}",
         }
     else:
         # FRAUD: Suspend account + reverse credits + flag DTE for invalidation
-        org_id_tx = tx_data["org_id"]
+        # org_id comes from the path parameter
         credits_to_reverse = tx_data["amount"]
 
         # Reverse credits
-        org = supabase.table("organizations").select("credit_balance").eq("id", org_id_tx).single().execute()
+        org = supabase.table("organizations").select("credit_balance").eq("id", org_id).single().execute()
         if org.data:
             current = org.data["credit_balance"]
             new_balance = max(0, current - credits_to_reverse)
             supabase.table("organizations").update({
                 "credit_balance": new_balance,
                 "plan_status": "suspended",
-            }).eq("id", org_id_tx).execute()
+            }).eq("id", org_id).execute()
 
             # Record reversal transaction
-            owner = supabase.table("users").select("email").eq("org_id", org_id_tx).limit(1).execute()
+            owner = supabase.table("users").select("email").eq("org_id", org_id).limit(1).execute()
             owner_email = owner.data[0]["email"] if owner.data else "admin@factura-sv.com"
             supabase.table("credit_transactions").insert({
                 "user_email": owner_email,
@@ -1181,26 +1176,18 @@ async def admin_verify_transfer(
                 "description": f"Fraud reversal for tx:{transaction_id}. Transferencia no verificada. {admin_notes}",
             }).execute()
 
-        # Mark original transaction as fraudulent
+        # Mark original transaction as fraudulent (append to description)
         supabase.table("credit_transactions").update({
-            "verified": False,
-            "verified_at": now_str,
-            "verified_by": admin["user_id"],
-            "admin_notes": f"FRAUDE: {admin_notes}",
+            "description": f"FRAUDE detectado {now_str} por {admin.get('email','')}. {admin_notes}".strip(),
         }).eq("id", transaction_id).execute()
-
-        # Flag invoice for invalidation if one was emitted
-        invoice_codigo = tx_data.get("invoice_codigo")
 
         return {
             "status": "fraud_detected",
             "transaction_id": transaction_id,
-            "org_id": org_id_tx,
+            "org_id": org_id,
             "credits_reversed": credits_to_reverse,
             "account_suspended": True,
-            "invoice_to_invalidate": invoice_codigo,
-            "message": f"Cuenta suspendida. {credits_to_reverse} creditos revertidos. "
-                       f"{'DTE ' + invoice_codigo + ' marcado para invalidacion.' if invoice_codigo else 'Sin DTE asociado.'}",
+            "message": f"Cuenta suspendida. {credits_to_reverse} creditos revertidos.",
         }
 
 
