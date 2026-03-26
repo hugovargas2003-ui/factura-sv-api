@@ -6,12 +6,10 @@ crear su primera organización y empezar a usar el sistema.
 
 Usa autenticación JWT directa (no requiere fila en tabla `users`).
 """
-import uuid
 import secrets
 import logging
-from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from supabase import Client as SupabaseClient
@@ -106,7 +104,6 @@ async def create_first_organization(
     """
     user_id = jwt_user["user_id"]
     email = jwt_user["email"]
-    now = datetime.utcnow().isoformat()
 
     # 1. Check if user already has an org
     existing = db.table("user_organizations").select(
@@ -131,32 +128,21 @@ async def create_first_organization(
                 "Si es su empresa, pida al administrador que lo vincule.",
             )
 
-    # 3. Create organization
-    org_id = str(uuid.uuid4())
+    # 3. Create organization (let DB defaults handle plan, quota, status)
     link_code = f"FSV-{secrets.token_hex(2).upper()}-{secrets.token_hex(2).upper()}"
 
-    org_data = {
-        "id": org_id,
-        "name": body.nombre.strip(),
-        "nit": nit,
-        "nrc": "",
-        "plan": "free",
-        "plan_status": "active",
-        "is_active": True,
-        "payment_method": "free",
-        "monthly_quota": 50,
-        "max_companies": 999,
-        "credit_balance": WELCOME_CREDITS,
-        "link_code": link_code,
-        "link_code_enabled": True,
-        "created_at": now,
-        "updated_at": now,
-    }
-
     try:
-        org_result = db.table("organizations").insert(org_data).execute()
+        org_result = db.table("organizations").insert({
+            "name": body.nombre.strip(),
+            "nit": nit or None,
+            "credit_balance": WELCOME_CREDITS,
+            "link_code": link_code,
+            "link_code_active": True,
+            "is_active": True,
+        }).execute()
         if not org_result.data:
             raise HTTPException(500, "Error creando organización")
+        org_id = org_result.data[0]["id"]
     except HTTPException:
         raise
     except Exception as e:
@@ -170,9 +156,8 @@ async def create_first_organization(
             "email": email,
             "full_name": body.nombre.strip(),
             "org_id": org_id,
-            "role": "admin",
-            "created_at": now,
-        }).execute()
+            "role": "owner",
+        }, on_conflict="id").execute()
     except Exception as e:
         # Rollback org
         try:
@@ -187,8 +172,9 @@ async def create_first_organization(
         db.table("user_organizations").insert({
             "user_id": user_id,
             "org_id": org_id,
-            "role": "admin",
+            "role": "owner",
             "is_default": True,
+            "confirmed_by_owner": True,
         }).execute()
     except Exception as e:
         logger.error(f"Onboarding user_organizations insert failed: {e}")
@@ -197,11 +183,11 @@ async def create_first_organization(
     # 6. Log welcome credits
     try:
         db.table("credit_transactions").insert({
-            "org_id": org_id,
-            "type": "cortesia",
+            "user_email": email,
             "amount": WELCOME_CREDITS,
-            "balance": WELCOME_CREDITS,
+            "type": "trial_grant",
             "description": "Créditos de bienvenida — registro self-service",
+            "balance_after": WELCOME_CREDITS,
         }).execute()
     except Exception as e:
         logger.error(f"Onboarding credit_transactions insert failed: {e}")
