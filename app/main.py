@@ -850,6 +850,9 @@ app.include_router(fiscal_id_router)
 from app.routers.org_link_router import router as org_link_router
 app.include_router(org_link_router)
 
+from app.routers.onboarding_router import router as onboarding_router
+app.include_router(onboarding_router)
+
 from app.routers.renta_router import router as renta_router
 app.include_router(renta_router)
 
