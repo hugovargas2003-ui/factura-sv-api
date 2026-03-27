@@ -70,9 +70,9 @@ def get_pricing_params(supabase) -> dict:
     result = supabase.table("platform_config").select("key, value").in_("key", keys).execute()
     params = {row["key"]: row["value"] for row in (result.data or [])}
     return {
-        "p_base": float(params.get("pricing_p_base", "0.13")),
-        "p_min": float(params.get("pricing_p_min", "0.03")),
-        "k": float(params.get("pricing_k", "0.013")),
+        "p_base": float(params.get("pricing_p_base", "0.25")),
+        "p_min": float(params.get("pricing_p_min", "0.04")),
+        "k": float(params.get("pricing_k", "0.022")),
         "min_recharge": int(params.get("pricing_min_recharge", "10")),
         "alert_pct": int(params.get("pricing_alert_pct", "20")),
         "alert_critical": int(params.get("pricing_alert_critical", "5")),
