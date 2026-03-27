@@ -113,7 +113,7 @@ def check_plan_status(supabase, org_id: str) -> dict:
 
     # Count DTEs this month
     month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0)
-    count_result = supabase.table("dte_documents").select(
+    count_result = supabase.table("dtes").select(
         "id", count="exact"
     ).eq("org_id", org_id).gte(
         "created_at", month_start.isoformat()

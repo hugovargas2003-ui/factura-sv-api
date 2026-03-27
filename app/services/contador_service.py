@@ -258,7 +258,6 @@ async def add_client_org(
     org_result = supabase.table("organizations").insert({
         "name": data["nombre"],
         "nit": data.get("nit", ""),
-        "nrc": data.get("nrc", ""),
         "plan": "free",
         "monthly_quota": 50,
     }).execute()

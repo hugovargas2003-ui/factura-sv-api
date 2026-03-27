@@ -113,7 +113,6 @@ class DTEService:
             "direccion_complemento": data["direccion_complemento"],
             "codigo_establecimiento": data.get("codigo_establecimiento", "M001"),
             "codigo_punto_venta": data.get("codigo_punto_venta", "P001"),
-            "mh_nit_auth": data.get("mh_nit_auth", ""),
             "ambiente": data.get("ambiente", "00"),
             "mh_api_base_url": data.get("mh_api_base_url",
                                          "https://apitest.dtes.mh.gob.sv"),
@@ -132,7 +131,6 @@ class DTEService:
         encrypted_cert = self.encryption.encrypt(cert_bytes, org_id)
         self.db.table("mh_credentials").update({
             "certificate_encrypted": encrypted_cert.hex(),
-            "certificate_filename": filename,
         }).eq("org_id", org_id).execute()
         return {"success": True, "message": f"Certificado '{filename}' guardado"}
 
@@ -148,10 +146,6 @@ class DTEService:
         creds = await self._get_credentials(org_id)
         try:
             await self._authenticate_mh(org_id, creds)
-            self.db.table("mh_credentials").update({
-                "is_validated": True,
-                "last_validated_at": datetime.now(timezone.utc).isoformat(),
-            }).eq("org_id", org_id).execute()
             return {"success": True,
                     "message": "Credenciales válidas — conexión MH exitosa"}
         except Exception as e:

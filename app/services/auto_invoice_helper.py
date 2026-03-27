@@ -160,12 +160,16 @@ async def emit_purchase_invoice(
         # 6. Update credit_transaction with invoice reference
         if codigo:
             try:
-                supabase.table("credit_transactions").update({
-                    "invoice_codigo": codigo,
-                    "invoice_tipo": tipo_dte,
-                }).eq("org_id", org_id).eq(
-                    "type", "purchase"
+                # Append invoice reference to description (credit_transactions has no invoice_codigo column)
+                tx = supabase.table("credit_transactions").select("id, description").eq(
+                    "service", "purchase"
                 ).order("created_at", desc=True).limit(1).execute()
+                if tx.data:
+                    existing_desc = tx.data[0].get("description", "") or ""
+                    new_desc = f"{existing_desc} [DTE:{tipo_dte} {codigo}]".strip()
+                    supabase.table("credit_transactions").update({
+                        "description": new_desc,
+                    }).eq("id", tx.data[0]["id"]).execute()
             except Exception as e:
                 logger.warning(f"[AutoInvoice] Could not update tx with invoice ref: {e}")
 

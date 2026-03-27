@@ -208,7 +208,7 @@ async def submit_dte_data(
     dte_data = body.dict()
 
     db.table("manual_payments").update({
-        "dte_data": dte_data,
+        "admin_notes": f"DTE data: {dte_data}",
         "updated_at": datetime.utcnow().isoformat(),
     }).eq("id", payment_id).execute()
 
@@ -355,8 +355,7 @@ async def reject_payment(
         "status": "rejected",
         "verified_by": admin.get("id"),
         "verified_at": now.isoformat(),
-        "rejection_reason": body.admin_notes or "Transferencia no verificada",
-        "admin_notes": body.admin_notes,
+        "admin_notes": body.admin_notes or "Transferencia no verificada",
         "updated_at": now.isoformat(),
     }).eq("id", payment_id).execute()
 

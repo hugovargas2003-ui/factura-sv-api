@@ -152,7 +152,7 @@ async def import_dtes_historicos(
                 "monto_total": monto_total,
                 "receptor_nombre": receptor_nombre or "Sin receptor",
                 "receptor_nit": receptor_nit,
-                "json_data": {
+                "documento_json": {
                     "source": "import_historico",
                     "row": i + 2,
                     "resumen": {

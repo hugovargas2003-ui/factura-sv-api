@@ -640,7 +640,6 @@ async def admin_create_organization(
     org_data = {
         "name": body.name,
         "nit": body.nit or "",
-        "nrc": body.nrc or "",
         "plan": body.plan,
         "plan_status": "active",
         "is_active": True,
@@ -706,7 +705,7 @@ async def admin_create_organization(
                 "org_id": org_id,
                 "payment_method": body.payment_method or "cash",
                 "amount": body.amount,
-                "plan": body.plan,
+                "plan_tier": body.plan,
                 "months": body.months or 1,
                 "status": "active",
                 "transfer_verified": True,
@@ -1356,7 +1355,10 @@ async def admin_get_org_full_config(
     creds = supabase.table("dte_credentials").select("id,nit,nrc,nombre_emisor,ambiente,created_at").eq("org_id", org_id).execute()
     keys = supabase.table("api_keys").select("id,key_prefix,name,is_active,last_used_at,created_by,created_at").eq("org_id", org_id).execute()
     wa = supabase.table("org_whatsapp_config").select("*").eq("org_id", org_id).execute()
-    credits = supabase.table("credit_transactions").select("*").eq("org_id", org_id).order("created_at", desc=True).limit(10).execute()
+    # credit_transactions has user_email, not org_id — get owner email first
+    owner = supabase.table("users").select("email").eq("org_id", org_id).limit(1).execute()
+    owner_email = owner.data[0]["email"] if owner.data else ""
+    credits = supabase.table("credit_transactions").select("*").eq("user_email", owner_email).order("created_at", desc=True).limit(10).execute()
     receptores = supabase.table("receptores_frecuentes").select("id", count="exact").eq("org_id", org_id).execute()
     dtes_emitidos = supabase.table("dtes").select("id", count="exact").eq("org_id", org_id).execute()
     dtes_recibidos = supabase.table("dte_recibidos").select("id", count="exact").eq("org_id", org_id).execute()

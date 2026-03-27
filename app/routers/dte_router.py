@@ -876,7 +876,7 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         import zipfile
 
         # Fetch matching DTEs
-        query = service.db.table("dte_emitidos").select(
+        query = service.db.table("dtes").select(
             "id, codigo_generacion, numero_control, tipo_dte, fecha_emision, receptor_nombre"
         ).eq("org_id", user["org_id"]).eq("estado", estado or "procesado")
 
