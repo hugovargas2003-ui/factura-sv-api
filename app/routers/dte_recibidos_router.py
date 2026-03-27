@@ -468,6 +468,7 @@ async def import_csv_recibidos(
                 "total_pagar": monto_total,
                 "json_original": {"source": "csv_import", "row": i + 2},
                 "source": "csv_import",
+                "status": "active",
                 "items_count": 0,
             }
 

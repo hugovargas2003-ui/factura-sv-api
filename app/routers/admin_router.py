@@ -724,6 +724,7 @@ async def admin_create_organization(
             owner = db.table("users").select("email").eq("org_id", org_id).limit(1).execute()
             owner_email = owner.data[0]["email"] if owner.data else "admin@factura-sv.com"
             db.table("credit_transactions").insert({
+                "org_id": org_id,
                 "user_email": owner_email,
                 "type": "cortesia",
                 "amount": body.initial_credits,
@@ -1017,6 +1018,7 @@ async def admin_manage_credits(
     owner = supabase.table("users").select("email").eq("org_id", org_id).limit(1).execute()
     owner_email = owner.data[0]["email"] if owner.data else "admin@factura-sv.com"
     supabase.table("credit_transactions").insert({
+        "org_id": org_id,
         "user_email": owner_email,
         "type": "purchase" if amount > 0 else "usage",
         "amount": amount,
@@ -1069,6 +1071,7 @@ async def admin_cash_payment(
     owner = supabase.table("users").select("email").eq("org_id", org_id).limit(1).execute()
     owner_email = owner.data[0]["email"] if owner.data else "admin@factura-sv.com"
     supabase.table("credit_transactions").insert({
+        "org_id": org_id,
         "user_email": owner_email,
         "type": "purchase",
         "amount": cantidad,
@@ -1168,6 +1171,7 @@ async def admin_verify_transfer(
             owner = supabase.table("users").select("email").eq("org_id", org_id).limit(1).execute()
             owner_email = owner.data[0]["email"] if owner.data else "admin@factura-sv.com"
             supabase.table("credit_transactions").insert({
+                "org_id": org_id,
                 "user_email": owner_email,
                 "type": "reversal",
                 "amount": -credits_to_reverse,

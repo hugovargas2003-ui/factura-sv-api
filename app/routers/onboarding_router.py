@@ -183,6 +183,7 @@ async def create_first_organization(
     # 6. Log welcome credits
     try:
         db.table("credit_transactions").insert({
+            "org_id": org_id,
             "user_email": email,
             "amount": WELCOME_CREDITS,
             "type": "trial_grant",

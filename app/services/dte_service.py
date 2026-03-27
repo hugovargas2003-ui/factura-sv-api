@@ -80,6 +80,18 @@ def get_plan_limits(plan: str) -> dict:
     """Get feature limits for a plan tier."""
     return PLAN_FEATURE_LIMITS.get(plan, PLAN_FEATURE_LIMITS["free"])
 
+def _extract_iva(resumen: dict) -> float:
+    """Extract IVA from resumen: totalIva (01), tributos[0].valor (03), or 0."""
+    if resumen.get("totalIva"):
+        return resumen["totalIva"]
+    tributos = resumen.get("tributos")
+    if tributos and isinstance(tributos, list) and len(tributos) > 0:
+        t = tributos[0]
+        if isinstance(t, dict):
+            return t.get("valor", 0)
+    return 0
+
+
 class DTEService:
     """Servicio principal de emisión DTE multi-tenant SaaS."""
 
@@ -116,6 +128,7 @@ class DTEService:
             "ambiente": data.get("ambiente", "00"),
             "mh_api_base_url": data.get("mh_api_base_url",
                                          "https://apitest.dtes.mh.gob.sv"),
+            "mh_nit_auth": data.get("mh_nit_auth"),
         }
         if encrypted_pwd:
             record["mh_password_encrypted"] = encrypted_pwd.hex()
@@ -128,6 +141,10 @@ class DTEService:
 
     async def save_certificate(self, org_id: str, cert_bytes: bytes,
                                 filename: str) -> dict:
+        # Ensure credentials row exists before updating
+        existing = self.db.table("mh_credentials").select("org_id").eq("org_id", org_id).execute()
+        if not existing.data:
+            self.db.table("mh_credentials").insert({"org_id": org_id}).execute()
         encrypted_cert = self.encryption.encrypt(cert_bytes, org_id)
         self.db.table("mh_credentials").update({
             "certificate_encrypted": encrypted_cert.hex(),
@@ -136,6 +153,10 @@ class DTEService:
 
     async def save_certificate_password(self, org_id: str,
                                          cert_password: str) -> dict:
+        # Ensure credentials row exists before updating
+        existing = self.db.table("mh_credentials").select("org_id").eq("org_id", org_id).execute()
+        if not existing.data:
+            self.db.table("mh_credentials").insert({"org_id": org_id}).execute()
         encrypted = self.encryption.encrypt_string(cert_password, org_id)
         self.db.table("mh_credentials").update({
             "cert_password_encrypted": encrypted.hex(),
@@ -308,7 +329,7 @@ class DTEService:
             "total_exenta": resumen.get("totalExenta", 0),
             "total_no_sujeta": resumen.get("totalNoSuj", 0),
             "sub_total": resumen.get("subTotal", 0),
-            "iva": resumen.get("ivaRete1") or resumen.get("iva", 0),
+            "iva": _extract_iva(resumen),
             "monto_total": monto_total,
             "estado": estado,
             "sello_recibido": mh_result.sello_recepcion,
@@ -318,6 +339,7 @@ class DTEService:
             "created_by": user_id,
             "sucursal_id": sucursal_id,
             "emitted_via": emitted_via,
+            "dte_referencia_id": dte_referencia.get("dte_referencia_id") if dte_referencia else None,
         }
         insert_result = self.db.table("dtes").insert(dte_record).execute()
 
@@ -801,6 +823,7 @@ class DTEService:
             owner_email = owner.data[0]["email"] if owner.data else None
             pool_desc = f"DTE {dte_id} emit_by:{org_id}" if billing_id != org_id else f"DTE {dte_id}"
             self.db.table("credit_transactions").insert({
+                "org_id": billing_id,
                 "user_email": owner_email,
                 "type": "usage",
                 "amount": -1,
