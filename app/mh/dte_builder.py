@@ -178,7 +178,7 @@ class DTEBuilder:
             "numDocumento": receptor.get("num_documento") or receptor.get("nit"),
             "nrc": sanitize_nrc(receptor.get("nrc")), "nombre": receptor["nombre"],
             "codActividad": receptor.get("cod_actividad"),
-            "descActividad": receptor.get("desc_actividad"),
+            "descActividad": (receptor.get("desc_actividad") or "")[:150],
             "nombreComercial": receptor.get("nombre_comercial"),
             "direccion": {"departamento": receptor.get("direccion_departamento", "06"),
                           "municipio": receptor.get("direccion_municipio", "14"),
@@ -242,7 +242,7 @@ class DTEBuilder:
         e = self.emisor
         emisor_nota = {
             "nit": e["nit"], "nrc": sanitize_nrc(e["nrc"]), "nombre": e["nombre"],
-            "codActividad": e["cod_actividad"], "descActividad": e["desc_actividad"],
+            "codActividad": e["cod_actividad"], "descActividad": e["desc_actividad"][:150],
             "nombreComercial": e.get("nombre_comercial"),
             "tipoEstablecimiento": e.get("tipo_establecimiento", "01"),
             "direccion": {"departamento": e["direccion_departamento"],
@@ -288,7 +288,7 @@ class DTEBuilder:
         e = self.emisor
         emisor_cr = {
             "nit": e["nit"], "nrc": sanitize_nrc(e["nrc"]), "nombre": e["nombre"],
-            "codActividad": e["cod_actividad"], "descActividad": e["desc_actividad"],
+            "codActividad": e["cod_actividad"], "descActividad": e["desc_actividad"][:150],
             "nombreComercial": e.get("nombre_comercial"),
             "direccion": {"departamento": e["direccion_departamento"],
                           "municipio": e["direccion_municipio"],
@@ -304,7 +304,7 @@ class DTEBuilder:
             "nrc": sanitize_nrc(receptor.get("nrc")), "nombre": receptor["nombre"],
             "nombreComercial": receptor.get("nombre_comercial"),
             "codActividad": receptor.get("cod_actividad"),
-            "descActividad": receptor.get("desc_actividad"),
+            "descActividad": (receptor.get("desc_actividad") or "")[:150],
             "direccion": {"departamento": receptor.get("direccion_departamento", "06"),
                           "municipio": receptor.get("direccion_municipio", "20"),
                           "distrito": receptor.get("direccion_distrito", "01"),
@@ -394,7 +394,7 @@ class DTEBuilder:
         e = self.emisor
         emisor_dcl = {
             "nit": e["nit"], "nrc": sanitize_nrc(e["nrc"]), "nombre": e["nombre"],
-            "codActividad": e["cod_actividad"], "descActividad": e["desc_actividad"],
+            "codActividad": e["cod_actividad"], "descActividad": e["desc_actividad"][:150],
             "nombreComercial": e.get("nombre_comercial"),
             "tipoEstablecimiento": e.get("tipo_establecimiento", "01"),
             "direccion": {"departamento": e["direccion_departamento"],
@@ -461,7 +461,7 @@ class DTEBuilder:
             "nombrePais": receptor.get("nombre_pais", "ESTADOS UNIDOS"),
             "complemento": receptor.get("complemento", receptor.get("direccion_complemento", "Exterior")),
             "tipoPersona": receptor.get("tipo_persona", 1),
-            "descActividad": receptor.get("desc_actividad", "Actividades varias"),
+            "descActividad": (receptor.get("desc_actividad") or "Actividades varias")[:150],
             "telefono": receptor.get("telefono"), "correo": receptor.get("correo"),
         }
         dte = {"identificacion": {
@@ -506,7 +506,7 @@ class DTEBuilder:
         e = self.emisor
         emisor_fse = {
             "nit": e["nit"], "nrc": sanitize_nrc(e["nrc"]), "nombre": e["nombre"],
-            "codActividad": e["cod_actividad"], "descActividad": e["desc_actividad"],
+            "codActividad": e["cod_actividad"], "descActividad": e["desc_actividad"][:150],
             "direccion": {"departamento": e["direccion_departamento"],
                           "municipio": e["direccion_municipio"],
                           "complemento": e["direccion_complemento"]},
@@ -521,7 +521,7 @@ class DTEBuilder:
             "numDocumento": receptor.get("num_documento", "000000000"),
             "nombre": receptor["nombre"],
             "codActividad": receptor.get("cod_actividad"),
-            "descActividad": receptor.get("desc_actividad"),
+            "descActividad": (receptor.get("desc_actividad") or "")[:150],
             "direccion": {"departamento": receptor.get("direccion_departamento", "06"),
                           "municipio": receptor.get("direccion_municipio", "14"),
                           "complemento": receptor.get("direccion_complemento", "San Salvador")},
@@ -556,7 +556,7 @@ class DTEBuilder:
             "nrc": sanitize_nrc(receptor.get("nrc")), "nombre": receptor["nombre"],
             "nombreComercial": receptor.get("nombre_comercial"),
             "codActividad": receptor.get("cod_actividad"),
-            "descActividad": receptor.get("desc_actividad"),
+            "descActividad": (receptor.get("desc_actividad") or "")[:150],
             "direccion": {"departamento": receptor.get("direccion_departamento", "06"),
                           "municipio": receptor.get("direccion_municipio", "14"),
                           "complemento": receptor.get("direccion_complemento", "San Salvador")},
@@ -567,7 +567,7 @@ class DTEBuilder:
         donatario = {
             "nit": e["nit"], "nrc": sanitize_nrc(e["nrc"]), "nombre": e["nombre"],
             "nombreComercial": e.get("nombre_comercial"),
-            "codActividad": e["cod_actividad"], "descActividad": e["desc_actividad"],
+            "codActividad": e["cod_actividad"], "descActividad": e["desc_actividad"][:150],
             "direccion": {"departamento": e["direccion_departamento"],
                           "municipio": e["direccion_municipio"],
                           "complemento": e["direccion_complemento"]},
@@ -618,7 +618,7 @@ class DTEBuilder:
         e = self.emisor
         return {
             "nit": e["nit"], "nrc": sanitize_nrc(e["nrc"]), "nombre": e["nombre"],
-            "codActividad": e["cod_actividad"], "descActividad": e["desc_actividad"],
+            "codActividad": e["cod_actividad"], "descActividad": e["desc_actividad"][:150],
             "nombreComercial": e.get("nombre_comercial"),
             "tipoEstablecimiento": e.get("tipo_establecimiento", "01"),
             "direccion": {"departamento": e["direccion_departamento"],
@@ -637,7 +637,7 @@ class DTEBuilder:
             "numDocumento": r.get("num_documento"),
             "nrc": sanitize_nrc(r.get("nrc")), "nombre": r["nombre"],
             "codActividad": r.get("cod_actividad"),
-            "descActividad": r.get("desc_actividad"),
+            "descActividad": (r.get("desc_actividad") or "")[:150],
             "direccion": {"departamento": r.get("direccion_departamento", "06"),
                           "municipio": r.get("direccion_municipio", "14"),
                           "complemento": r.get("direccion_complemento", "San Salvador")},
@@ -649,7 +649,7 @@ class DTEBuilder:
             "nit": r.get("nit") or r.get("num_documento"),
             "nrc": sanitize_nrc(r.get("nrc")), "nombre": r["nombre"],
             "codActividad": r.get("cod_actividad"),
-            "descActividad": r.get("desc_actividad"),
+            "descActividad": (r.get("desc_actividad") or "")[:150],
             "nombreComercial": r.get("nombre_comercial"),
             "direccion": {"departamento": r.get("direccion_departamento", "06"),
                           "municipio": r.get("direccion_municipio", "14"),
