@@ -22,6 +22,7 @@ from app.services import f07_generator
 from app.services import org_service
 from app.services import contador_service
 from app.services import whatsapp_service
+from app.services.whatsapp_express_engine import send_dte_whatsapp as express_send_whatsapp
 from app.services import cxc_service
 from app.services import cxp_service
 from app.services import webhook_service
@@ -1889,6 +1890,70 @@ Total a Pagar: $1,412.50"""
             caption=f"DTE {dte.get('numero_control', '')} - {dte.get('receptor_nombre', '')}",
         )
         return result
+
+    @router.post("/dte/{dte_id}/send-whatsapp")
+    async def resend_dte_whatsapp(
+        dte_id: str,
+        request: Request,
+        service=Depends(get_dte_service),
+        user=Depends(get_current_user),
+    ):
+        """Reenviar DTE por WhatsApp vía Express Engine."""
+        org_id = user["org_id"]
+
+        dte_result = service.db.table("dtes").select("*").eq("id", dte_id).eq("org_id", org_id).single().execute()
+        if not dte_result.data:
+            raise HTTPException(404, "DTE no encontrado")
+        dte = dte_result.data
+
+        try:
+            body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        except Exception:
+            body = {}
+
+        documento = dte.get("documento_json", {}) or {}
+        receptor_json = documento.get("receptor", {}) or {}
+        phone = (
+            body.get("phone")
+            or dte.get("receptor_telefono")
+            or receptor_json.get("telefono")
+            or ""
+        )
+        if not phone:
+            raise HTTPException(400, "El receptor no tiene número de teléfono registrado")
+
+        try:
+            from app.services.pdf_generator import DTEPdfGenerator
+            pdf_gen = DTEPdfGenerator(
+                dte_json=documento,
+                sello=dte.get("sello_recibido", ""),
+                estado=dte.get("estado", ""),
+            )
+            pdf_bytes = pdf_gen.generate()
+        except Exception as e:
+            raise HTTPException(500, f"Error generando PDF: {e}")
+
+        creds_result = service.db.table("dte_credentials").select("nombre").eq("org_id", org_id).limit(1).execute()
+        emisor_nombre = ""
+        if creds_result.data:
+            emisor_nombre = creds_result.data[0].get("nombre", "") or ""
+
+        result = await express_send_whatsapp(
+            phone=phone,
+            pdf_bytes=pdf_bytes,
+            tipo_dte=dte["tipo_dte"],
+            numero_control=dte["numero_control"],
+            monto_total=float(dte.get("monto_total") or 0),
+            receptor_nombre=dte.get("receptor_nombre", "") or "",
+            emisor_nombre=emisor_nombre,
+            org_id=org_id,
+            dte_id=dte_id,
+            fecha_emision=str(dte.get("fecha_emision", "")),
+        )
+
+        if result.get("success"):
+            return {"success": True, "message": f"DTE enviado por WhatsApp a {phone}", **result}
+        raise HTTPException(502, f"Error enviando por WhatsApp: {result.get('error', 'Unknown')}")
 
     @router.get("/config/whatsapp")
     async def get_whatsapp_config(user=Depends(get_current_user), service=Depends(get_dte_service)):

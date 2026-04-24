@@ -7,11 +7,13 @@ REUTILIZA los módulos existentes:
   - transmit_service (transmisión al MH con reintentos)
   - auth_bridge (autenticación MH)
 """
+import asyncio
 import logging
 from app.services import webhook_service
 from app.services import audit_service
 from app.services import notification_service
 from app.services import contabilidad_service
+from app.services.whatsapp_express_engine import send_dte_whatsapp as express_send_whatsapp
 from datetime import datetime, timezone
 
 from supabase import Client as SupabaseClient
@@ -413,47 +415,42 @@ class DTEService:
             except Exception as email_err:
                 logger.error(f"Email no enviado: {email_err}")
 
-        # 12. Enviar PDF por WhatsApp automáticamente (config global desde /admin)
+        # 12. Enviar PDF por WhatsApp automáticamente vía Express Engine (no-bloqueante)
         if estado == "procesado" and receptor.get("telefono"):
             try:
-                from app.services.whatsapp_service import send_dte_pdf
-
-                wa_config = self.db.table("platform_config").select(
-                    "key, value"
-                ).in_("key", [
-                    "whatsapp_enabled", "whatsapp_phone_number_id", "whatsapp_access_token"
-                ]).execute()
-                wa_map = {r["key"]: r["value"] for r in (wa_config.data or [])}
-
-                if wa_map.get("whatsapp_enabled") == "true" and wa_map.get("whatsapp_phone_number_id"):
-                    # Decrypt global token
-                    access_token = self.encryption.decrypt_string(
-                        wa_map["whatsapp_access_token"], "platform_global"
+                try:
+                    wa_pdf = pdf_bytes
+                except NameError:
+                    from app.services.pdf_generator import DTEPdfGenerator
+                    wa_gen = DTEPdfGenerator(
+                        dte_json=dte_dict,
+                        sello=mh_result.sello_recepcion,
+                        estado=estado,
                     )
+                    wa_pdf = wa_gen.generate()
 
-                    # Generate PDF if not already available
-                    try:
-                        wa_pdf = pdf_bytes  # Reuse from email block
-                    except NameError:
-                        from app.services.pdf_generator import DTEPdfGenerator
-                        wa_gen = DTEPdfGenerator(
-                            dte_json=dte_dict,
-                            sello=mh_result.sello_recepcion,
-                            estado=estado,
-                        )
-                        wa_pdf = wa_gen.generate()
+                dte_row_id = (
+                    insert_result.data[0]["id"]
+                    if insert_result.data else ""
+                )
 
-                    await send_dte_pdf(
-                        phone_number_id=wa_map["whatsapp_phone_number_id"],
-                        access_token=access_token,
-                        recipient_phone=receptor["telefono"],
+                asyncio.create_task(
+                    express_send_whatsapp(
+                        phone=receptor["telefono"],
                         pdf_bytes=wa_pdf,
-                        filename=f"DTE_{numero_control}.pdf",
-                        caption=f"DTE {numero_control} - {receptor.get('nombre', '')}",
+                        tipo_dte=tipo_dte,
+                        numero_control=numero_control,
+                        monto_total=float(monto_total or 0),
+                        receptor_nombre=receptor.get("nombre", ""),
+                        emisor_nombre=emisor_data.get("nombre", ""),
+                        org_id=org_id,
+                        dte_id=str(dte_row_id),
+                        fecha_emision=dte_dict["identificacion"]["fecEmi"],
+                        send_json=False,
                     )
-                    logger.info(f"WhatsApp PDF sent to {receptor['telefono']}")
+                )
             except Exception as wa_err:
-                logger.error(f"WhatsApp auto-send failed (non-blocking): {wa_err}")
+                logger.warning(f"WhatsApp dispatch failed (non-blocking): {wa_err}")
 
 
         # ── Webhook notification (non-blocking) ──
