@@ -78,7 +78,7 @@ def get_pricing_params(supabase) -> dict:
         "min_recharge": int(params.get("pricing_min_recharge", "10")),
         "alert_pct": int(params.get("pricing_alert_pct", "20")),
         "alert_critical": int(params.get("pricing_alert_critical", "5")),
-        "trial_credits": int(params.get("pricing_trial_credits", "50")),
+        "trial_credits": int(params.get("pricing_trial_credits", "10")),
         "trial_days": int(params.get("pricing_trial_days", "3")),
     }
 
