@@ -33,6 +33,15 @@ pandas
 pdfplumber
 httpx>=0.25.0
 
+# Email (Resend — replaces GAS 2K/day limit)
+resend>=2.0.0
+
+# Cache (Upstash Redis for MH auth tokens)
+redis>=5.0.0
+
+# Monitoring (Sentry error tracking)
+sentry-sdk[fastapi]>=2.0.0
+
 # Rate limiting
 slowapi==0.1.9
 pytesseract

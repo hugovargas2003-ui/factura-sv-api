@@ -102,8 +102,8 @@ async def fire_webhooks(
 ) -> None:
     """
     Fire all active webhooks for an org+event.
+    Uses persistent delivery queue with exponential backoff retry.
     Non-blocking — errors are logged, never raised.
-    Called from dte_service.py post-emission hooks.
     """
     try:
         result = supabase.table("webhooks").select(
@@ -114,51 +114,29 @@ async def fire_webhooks(
         if not hooks:
             return
 
-        payload = json.dumps({
-            "event": event,
-            "timestamp": datetime.utcnow().isoformat(),
-            "data": data,
-        }, default=str)
+        from app.services.webhook_delivery_service import create_delivery
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            for hook in hooks:
-                if event not in (hook.get("events") or []):
-                    continue
+        for hook in hooks:
+            if event not in (hook.get("events") or []):
+                continue
 
-                signature = _sign_payload(payload, hook["secret"])
+            try:
+                await create_delivery(
+                    supabase=supabase,
+                    webhook_id=hook["id"],
+                    org_id=org_id,
+                    url=hook["url"],
+                    secret=hook["secret"],
+                    event=event,
+                    data=data,
+                )
+            except Exception as e:
+                logger.error(f"Webhook delivery creation failed for {hook['id']}: {e}")
 
-                try:
-                    resp = await client.post(
-                        hook["url"],
-                        content=payload,
-                        headers={
-                            "Content-Type": "application/json",
-                            "X-Webhook-Signature": signature,
-                            "X-Webhook-Event": event,
-                            "X-Webhook-Id": hook["id"],
-                        },
-                    )
-
-                    supabase.table("webhooks").update({
-                        "last_triggered_at": datetime.utcnow().isoformat(),
-                        "last_status_code": resp.status_code,
-                        "failure_count": 0 if resp.status_code < 400 else hook.get("failure_count", 0) + 1,
-                    }).eq("id", hook["id"]).execute()
-
-                    if resp.status_code >= 400:
-                        logger.warning(f"Webhook {hook['id']} returned {resp.status_code}")
-
-                        # Auto-disable after 10 consecutive failures
-                        if (hook.get("failure_count", 0) + 1) >= 10:
-                            supabase.table("webhooks").update({"active": False}).eq("id", hook["id"]).execute()
-                            logger.warning(f"Webhook {hook['id']} auto-disabled after 10 failures")
-
-                except Exception as e:
-                    logger.error(f"Webhook {hook['id']} failed: {e}")
-                    supabase.table("webhooks").update({
-                        "last_triggered_at": datetime.utcnow().isoformat(),
-                        "failure_count": hook.get("failure_count", 0) + 1,
-                    }).eq("id", hook["id"]).execute()
+                # Auto-disable after 10 consecutive failures
+                if (hook.get("failure_count", 0) + 1) >= 10:
+                    supabase.table("webhooks").update({"active": False}).eq("id", hook["id"]).execute()
+                    logger.warning(f"Webhook {hook['id']} auto-disabled after 10 failures")
 
     except Exception as e:
         logger.error(f"fire_webhooks error: {e}")

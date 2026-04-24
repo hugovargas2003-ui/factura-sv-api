@@ -213,4 +213,20 @@ class SignEngine:
         return f"{_JWS_HEADER_B64}.{payload_b64}.{signature_b64}"
 
 
+    def sign_raw(self, session: CertificateSession, data: bytes) -> str:
+        """
+        Sign raw bytes (e.g. SHA-256 hash of a PDF) with RS512.
+        Returns base64-encoded signature string.
+        """
+        if session.private_key is None:
+            raise SignEngineError("La sesion del certificado ha sido destruida.", code="CERT_SESSION_DESTROYED")
+        try:
+            signature = session.private_key.sign(
+                data, padding.PKCS1v15(), hashes.SHA512(),
+            )
+            return base64.b64encode(signature).decode("ascii")
+        except Exception as e:
+            raise SignEngineError(f"Error al firmar datos: {str(e)}", code="SIGN_FAILED") from e
+
+
 sign_engine = SignEngine()
