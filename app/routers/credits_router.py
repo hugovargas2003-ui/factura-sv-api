@@ -1,15 +1,15 @@
 """
 credits_router.py — Credit system endpoints for DTE prepaid credits.
-Implements the logarithmic pricing algorithm from FACTURASV_Algoritmo_Precios_Creditos_DTE.pdf
 
-Formula: precio_por_dte = max(P_min, P_base - K * ln(cantidad))
-Parameters stored in platform_config table (Supabase).
+Flat pricing: $0.10 per DTE credit.
+Each credit includes: DTE emission + MH transmission + digital signature + PDF
++ email delivery + WhatsApp delivery.
+Credits never expire. No monthly fees.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from datetime import datetime
-import math
 import logging
 
 from app.dependencies import get_supabase, get_current_user, get_encryption
@@ -60,19 +60,21 @@ class CreditTransaction(BaseModel):
 
 # ── Helpers ──
 
+PRICE_PER_DTE = 0.10
+
+
 def get_pricing_params(supabase) -> dict:
-    """Fetch pricing parameters from platform_config."""
+    """Fetch non-pricing params (recharge minimum, alerts, trial) from platform_config.
+
+    Pricing itself is hardcoded at $0.10/DTE — not configurable via DB.
+    """
     keys = [
-        'pricing_p_base', 'pricing_p_min', 'pricing_k',
         'pricing_min_recharge', 'pricing_alert_pct', 'pricing_alert_critical',
-        'pricing_trial_credits', 'pricing_trial_days'
+        'pricing_trial_credits', 'pricing_trial_days',
     ]
     result = supabase.table("platform_config").select("key, value").in_("key", keys).execute()
     params = {row["key"]: row["value"] for row in (result.data or [])}
     return {
-        "p_base": float(params.get("pricing_p_base", "0.25")),
-        "p_min": float(params.get("pricing_p_min", "0.04")),
-        "k": float(params.get("pricing_k", "0.022")),
         "min_recharge": int(params.get("pricing_min_recharge", "10")),
         "alert_pct": int(params.get("pricing_alert_pct", "20")),
         "alert_critical": int(params.get("pricing_alert_critical", "5")),
@@ -81,20 +83,17 @@ def get_pricing_params(supabase) -> dict:
     }
 
 
-def calculate_price(cantidad: int, p_base: float, p_min: float, k: float) -> tuple:
+def calculate_price(cantidad: int) -> tuple:
     """
-    Logarithmic pricing with floor.
-    $0.07/DTE (100 credits) → $0.03/DTE (2,200+ credits).
-    Floor: $0.03/DTE for any quantity >= 2,200.
-    Returns (unit_price, total, discount_pct)
+    Flat pricing: $0.10 per DTE credit.
+    Includes emission + MH transmission + digital signature + PDF + email + WhatsApp.
+    Credits never expire. No monthly fees. No volume discount.
+    Returns (unit_price, total, discount_pct) — discount_pct always 0.
     """
-    import math
     if cantidad <= 0:
-        return (0.07, 0.0, 0.0)
-    unit_price = round(max(p_min, p_base - k * math.log(cantidad)), 4)
-    total = round(unit_price * cantidad, 2)
-    discount_pct = round((1 - unit_price / 0.0701) * 100, 1) if unit_price < 0.0701 else 0.0
-    return (unit_price, total, discount_pct)
+        return (PRICE_PER_DTE, 0.0, 0.0)
+    total = round(cantidad * PRICE_PER_DTE, 2)
+    return (PRICE_PER_DTE, total, 0.0)
 
 
 # ── Public Endpoint ──
@@ -110,10 +109,7 @@ async def pricing_calculate(cantidad: int = 100, supabase=Depends(get_supabase))
     if cantidad > 100000:
         raise HTTPException(400, "Para mas de 100,000 creditos contacte ventas")
 
-    params = get_pricing_params(supabase)
-    unit_price, total, discount_pct = calculate_price(
-        cantidad, params["p_base"], params["p_min"], params["k"]
-    )
+    unit_price, total, discount_pct = calculate_price(cantidad)
     return PricingResponse(
         cantidad=cantidad,
         precio_unitario=unit_price,
@@ -174,9 +170,7 @@ async def purchase_credits(
     if req.cantidad < params["min_recharge"]:
         raise HTTPException(400, f"Minimo {params['min_recharge']} creditos por recarga")
 
-    unit_price, total, _ = calculate_price(
-        req.cantidad, params["p_base"], params["p_min"], params["k"]
-    )
+    unit_price, total, _ = calculate_price(req.cantidad)
 
     org_id = user["org_id"]
 
