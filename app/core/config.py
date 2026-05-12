@@ -70,9 +70,12 @@ MH_URLS = {
 }
 
 
-def get_mh_url(service: str) -> str:
-    """Get the MH API URL for a service based on current environment."""
-    env = settings.mh_environment
+def get_mh_url(service: str, environment: MHEnvironment | None = None) -> str:
+    """Get the MH API URL for a service.
+
+    Pass `environment` to override the global setting (per-customer auth/transmit).
+    """
+    env = environment if environment is not None else settings.mh_environment
     urls = MH_URLS.get(env)
     if not urls:
         raise ValueError(f"Unknown MH environment: {env}")

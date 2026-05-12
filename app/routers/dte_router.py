@@ -480,7 +480,8 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
         query = service.db.table("dtes").select(
             "id, tipo_dte, numero_control, codigo_generacion, "
             "fecha_emision, receptor_nombre, receptor_nit, "
-            "monto_total, estado, sello_recibido, created_at",
+            "monto_total, estado, sello_recibido, created_at, "
+            "ambiente, mh_server",
             count="exact"
         ).eq("org_id", user["org_id"]).order("created_at", desc=True)
 

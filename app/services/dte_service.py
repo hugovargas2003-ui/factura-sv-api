@@ -334,6 +334,8 @@ class DTEService:
             "iva": _extract_iva(resumen),
             "monto_total": monto_total,
             "estado": estado,
+            "ambiente": creds.get("ambiente", "00"),
+            "mh_server": creds.get("mh_api_base_url", ""),
             "sello_recibido": mh_result.sello_recepcion,
             "respuesta_mh": mh_result.raw_response,
             "documento_json": dte_dict,
@@ -520,7 +522,12 @@ class DTEService:
             "numero_control": numero_control,
             "sello_recibido": mh_result.sello_recepcion,
             "estado": estado,
+            "ambiente": creds.get("ambiente", "00"),
         }
+        if creds.get("ambiente") == "00" and float(monto_total or 0) > 50:
+            result["warning"] = (
+                "DTE emitido en AMBIENTE DE PRUEBAS — no tiene validez fiscal"
+            )
         if mh_result.status != "PROCESADO":
             result["error"] = mh_result.descripcion_msg
             result["observaciones"] = mh_result.observaciones
@@ -695,20 +702,29 @@ class DTEService:
         return result.data
 
     async def _authenticate_mh(self, org_id: str, creds: dict) -> TokenInfo:
+        # Per-customer environment: "01" → PRODUCTION, anything else → TEST.
+        # Auth, transmit and token TTL must all match this; the global
+        # settings.mh_environment is only a fallback.
+        from app.core.config import MHEnvironment
+        customer_env = (
+            MHEnvironment.PRODUCTION
+            if creds.get("ambiente") == "01"
+            else MHEnvironment.TEST
+        )
+
         # 1. In-memory cache (fastest)
         cached = self._token_cache.get(org_id)
-        if cached and not cached.is_expired:
+        if cached and not cached.is_expired and cached.environment == customer_env:
             return cached
 
         # 2. Redis cache (survives restarts)
         from app.services.cache_service import get_cached_mh_token, cache_mh_token
         redis_cached = get_cached_mh_token(org_id)
         if redis_cached:
-            from app.core.config import settings
             token_info = TokenInfo(
                 token=redis_cached["token"],
                 nit=redis_cached["nit"],
-                environment=settings.mh_environment,
+                environment=customer_env,
             )
             if not token_info.is_expired:
                 self._token_cache[org_id] = token_info
@@ -719,7 +735,9 @@ class DTEService:
         password = self.encryption.decrypt_string(
             bytes.fromhex(creds["mh_password_encrypted"]), org_id)
 
-        token_info = await auth_bridge.authenticate(nit=nit, password=password)
+        token_info = await auth_bridge.authenticate(
+            nit=nit, password=password, environment=customer_env,
+        )
         self._token_cache[org_id] = token_info
 
         # Cache in Redis for 23h

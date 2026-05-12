@@ -77,13 +77,22 @@ class AuthBridge:
         # Use token_info.bearer for subsequent requests
     """
 
-    async def authenticate(self, nit: str, password: str) -> TokenInfo:
+    async def authenticate(
+        self,
+        nit: str,
+        password: str,
+        environment: MHEnvironment | None = None,
+    ) -> TokenInfo:
         """
         Authenticate against MH API and obtain JWT token.
 
         Args:
             nit: Contributor NIT (format: 0614-XXXXXX-XXX-X)
             password: Oficina Virtual password (13-25 chars)
+            environment: per-customer MH environment. If omitted, falls back to
+                the global `settings.mh_environment`. Authentication MUST hit
+                the same server (test vs production) the customer will transmit
+                to, otherwise the JWT is rejected.
 
         Returns:
             TokenInfo with the JWT token
@@ -91,7 +100,8 @@ class AuthBridge:
         Raises:
             AuthBridgeError: If authentication fails
         """
-        url = get_mh_url("auth")
+        env = environment if environment is not None else settings.mh_environment
+        url = get_mh_url("auth", env)
 
         # MH expects these exact field names
         payload = {
@@ -131,7 +141,7 @@ class AuthBridge:
                 token_info = TokenInfo(
                     token=token,
                     nit=nit,
-                    environment=settings.mh_environment,
+                    environment=env,
                 )
 
                 logger.info(f"Authentication successful for NIT {nit[:8]}***. "
