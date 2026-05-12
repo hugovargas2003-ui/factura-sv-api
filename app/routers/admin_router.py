@@ -426,12 +426,7 @@ class ManualPlanActivation(BaseModel):
     notes: Optional[str] = Field(None, description="Notas internas")
 
 
-PLAN_QUOTAS = {
-    "free": 50,
-    "basico": 200,
-    "profesional": 1000,
-    "enterprise": 999999,
-}
+from app.services.plan_limits import UNLIMITED_DTE_QUOTA, UNLIMITED_MAX_COMPANIES
 
 PLAN_PRICES = {
     "basico": 14.99,
@@ -451,8 +446,10 @@ async def activate_plan_manual(
     Activar plan manualmente cuando el cliente paga por transferencia o efectivo.
     Setea plan, payment_method, plan_expires_at, monthly_quota, plan_status.
     """
-    if body.plan not in PLAN_QUOTAS:
-        raise HTTPException(400, f"Plan inválido. Opciones: {list(PLAN_QUOTAS.keys())}")
+    # PLAN_PRICES is the canonical list of billable plans (free/basico/profesional/enterprise).
+    valid_plans = set(PLAN_PRICES.keys()) | {"free"}
+    if body.plan not in valid_plans:
+        raise HTTPException(400, f"Plan inválido. Opciones: {sorted(valid_plans)}")
     if body.payment_method not in ("cash", "transfer"):
         raise HTTPException(400, "Método de pago debe ser 'cash' o 'transfer'")
 
@@ -489,7 +486,7 @@ async def activate_plan_manual(
         "plan_status": "active",
         "payment_method": body.payment_method,
         "plan_expires_at": expires_at.isoformat(),
-        "monthly_quota": PLAN_QUOTAS[body.plan],
+        "monthly_quota": UNLIMITED_DTE_QUOTA,
         "is_active": True,
         "payment_notes": all_notes,
         "updated_at": now.isoformat(),
@@ -530,7 +527,7 @@ async def activate_plan_manual(
             "months": body.months,
             "amount": body.amount,
             "expires_at": expires_at.isoformat(),
-            "monthly_quota": PLAN_QUOTAS[body.plan],
+            "monthly_quota": UNLIMITED_DTE_QUOTA,
         },
     }
 
@@ -593,15 +590,6 @@ class AdminCreateUser(BaseModel):
     role: str = Field("admin", pattern="^(admin|member|viewer)$")
 
 
-PLAN_DTE_LIMITS = {
-    "free": 50,
-    "emprendedor": 200,
-    "profesional": 1000,
-    "contador": 5000,
-    "enterprise": 999999,
-}
-
-
 @router.post("/organizations/create")
 async def admin_create_organization(
     body: AdminCreateOrg,
@@ -644,8 +632,8 @@ async def admin_create_organization(
         "plan_status": "active",
         "is_active": True,
         "payment_method": body.payment_method or "free",
-        "monthly_quota": PLAN_DTE_LIMITS.get(body.plan, 50),
-        "max_companies": 999,
+        "monthly_quota": UNLIMITED_DTE_QUOTA,
+        "max_companies": UNLIMITED_MAX_COMPANIES,
         "credit_balance": body.initial_credits or 0,
         "link_code": link_code,
         "link_code_active": True,
@@ -1389,11 +1377,8 @@ class ActivateApiPlan(BaseModel):
     payment_method: str = Field(default="admin_grant", description="admin_grant | cash | transfer")
     admin_notes: str = Field(default="")
 
-API_PLAN_QUOTAS = {
-    "api_piloto": 2000,
-    "api_produccion": 10000,
-    "api_enterprise": 999999,
-}
+# Valid API plan keys (quota itself is unlimited — see plan_limits.py)
+API_PLAN_KEYS = {"api_piloto", "api_produccion", "api_enterprise"}
 
 @router.post("/organizations/{org_id}/activate-api-plan")
 async def activate_api_plan(
@@ -1405,32 +1390,32 @@ async def activate_api_plan(
     """Admin: Activate API plan for an org (bypass Stripe)."""
     from datetime import timedelta
     plan_key = f"api_{body.plan}"
-    if plan_key not in API_PLAN_QUOTAS:
+    if plan_key not in API_PLAN_KEYS:
         raise HTTPException(400, f"Plan invalido. Opciones: piloto, produccion, enterprise")
-    
+
     org = db.table("organizations").select("id, name").eq("id", org_id).single().execute()
     if not org.data:
         raise HTTPException(404, "Organizacion no encontrada")
-    
+
     now = datetime.utcnow()
     expires_at = (now + timedelta(days=body.months * 30)).isoformat()
-    
+
     db.table("organizations").update({
         "plan": plan_key,
         "plan_status": "active",
         "plan_started_at": now.isoformat(),
         "plan_expires_at": expires_at,
-        "monthly_quota": API_PLAN_QUOTAS[plan_key],
+        "monthly_quota": UNLIMITED_DTE_QUOTA,
         "payment_method": body.payment_method,
         "payment_notes": f"[{now.strftime('%Y-%m-%d')}] {plan_key} activado por admin. {body.months}m. {body.admin_notes}",
         "updated_at": now.isoformat(),
     }).eq("id", org_id).execute()
-    
+
     return {
         "success": True,
         "plan": plan_key,
         "expires_at": expires_at,
-        "monthly_quota": API_PLAN_QUOTAS[plan_key],
+        "monthly_quota": UNLIMITED_DTE_QUOTA,
         "org_name": org.data["name"],
     }
 
@@ -1445,7 +1430,7 @@ async def deactivate_api_plan(
     db.table("organizations").update({
         "plan": "free",
         "plan_status": "active",
-        "monthly_quota": 50,
+        "monthly_quota": UNLIMITED_DTE_QUOTA,
         "stripe_subscription_id": None,
         "plan_expires_at": None,
         "payment_method": "free",

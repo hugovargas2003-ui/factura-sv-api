@@ -44,43 +44,12 @@ logger = logging.getLogger("factura-sv.dte_service")
 
 
 
-# ── Plan feature limits ──────────────────────────────────────
-PLAN_FEATURE_LIMITS = {
-    "free":          {"monthly_quota": 50,     "max_users": 1,  "max_sucursales": 1, "max_api_keys": 1,  "max_webhooks": 2,  "batch_limit": 0,   "rate_limit_hour": 100},
-    "emprendedor":   {"monthly_quota": 200,    "max_users": 3,  "max_sucursales": 1, "max_api_keys": 3,  "max_webhooks": 5,  "batch_limit": 10,  "rate_limit_hour": 500},
-    "basico":        {"monthly_quota": 200,    "max_users": 3,  "max_sucursales": 1, "max_api_keys": 3,  "max_webhooks": 5,  "batch_limit": 10,  "rate_limit_hour": 500},
-    "profesional":   {"monthly_quota": 1000,   "max_users": 10, "max_sucursales": 3, "max_api_keys": 10, "max_webhooks": 10, "batch_limit": 50,  "rate_limit_hour": 2000},
-    "empresarial":   {"monthly_quota": 999999, "max_users": 999,"max_sucursales": 999,"max_api_keys": 999,"max_webhooks": 999,"batch_limit": 999, "rate_limit_hour": 10000},
-    "enterprise":    {"monthly_quota": 999999, "max_users": 999,"max_sucursales": 999,"max_api_keys": 999,"max_webhooks": 999,"batch_limit": 999, "rate_limit_hour": 10000},
-    "contador":      {"monthly_quota": 5000,   "max_users": 999,"max_sucursales": 999,"max_api_keys": 999,"max_webhooks": 999,"batch_limit": 100, "rate_limit_hour": 5000},
-}
-
-def get_plan_limits(plan: str) -> dict:
-    """Get feature limits for a plan tier."""
-    return PLAN_FEATURE_LIMITS.get(plan, PLAN_FEATURE_LIMITS["free"])
-
 class DTEServiceError(Exception):
     def __init__(self, message: str, code: str = "DTE_ERROR"):
         self.message = message
         self.code = code
         super().__init__(message)
 
-
-
-# ── Plan feature limits ──────────────────────────────────────
-PLAN_FEATURE_LIMITS = {
-    "free":          {"monthly_quota": 50,     "max_users": 1,  "max_sucursales": 1, "max_api_keys": 1,  "max_webhooks": 2,  "batch_limit": 0,   "rate_limit_hour": 100},
-    "emprendedor":   {"monthly_quota": 200,    "max_users": 3,  "max_sucursales": 1, "max_api_keys": 3,  "max_webhooks": 5,  "batch_limit": 10,  "rate_limit_hour": 500},
-    "basico":        {"monthly_quota": 200,    "max_users": 3,  "max_sucursales": 1, "max_api_keys": 3,  "max_webhooks": 5,  "batch_limit": 10,  "rate_limit_hour": 500},
-    "profesional":   {"monthly_quota": 1000,   "max_users": 10, "max_sucursales": 3, "max_api_keys": 10, "max_webhooks": 10, "batch_limit": 50,  "rate_limit_hour": 2000},
-    "empresarial":   {"monthly_quota": 999999, "max_users": 999,"max_sucursales": 999,"max_api_keys": 999,"max_webhooks": 999,"batch_limit": 999, "rate_limit_hour": 10000},
-    "enterprise":    {"monthly_quota": 999999, "max_users": 999,"max_sucursales": 999,"max_api_keys": 999,"max_webhooks": 999,"batch_limit": 999, "rate_limit_hour": 10000},
-    "contador":      {"monthly_quota": 5000,   "max_users": 999,"max_sucursales": 999,"max_api_keys": 999,"max_webhooks": 999,"batch_limit": 100, "rate_limit_hour": 5000},
-}
-
-def get_plan_limits(plan: str) -> dict:
-    """Get feature limits for a plan tier."""
-    return PLAN_FEATURE_LIMITS.get(plan, PLAN_FEATURE_LIMITS["free"])
 
 def _extract_iva(resumen: dict) -> float:
     """Extract IVA from resumen: totalIva (01), tributos[0].valor (03), or 0."""
@@ -784,8 +753,16 @@ class DTEService:
         return org_id
 
     async def _check_quota(self, org_id: str):
-        """Enforce credit balance and max_companies limit.
-        Supports billing pool: if org has billing_org_id, checks parent balance."""
+        """Enforce credit balance and max_companies override.
+
+        Business model is prepaid credits — emission is gated solely by
+        credit_balance > 0. `max_companies` is a DB-driven override
+        (NULL / 0 / >= UNLIMITED_MAX_COMPANIES → unlimited).
+        Supports billing pool: if org has billing_org_id, checks parent
+        balance.
+        """
+        from app.services.plan_limits import is_unlimited_companies
+
         # Check if org owner is bypass account
         owner = self.db.table("users").select("email").eq(
             "org_id", org_id).limit(1).execute()
@@ -796,41 +773,31 @@ class DTEService:
         billing_id = await self._resolve_billing_org(org_id)
 
         org_result = self.db.table("organizations").select(
-            "credit_balance, plan, plan_status, plan_expires_at, max_companies"
+            "credit_balance, max_companies"
         ).eq("id", billing_id).single().execute()
 
         if not org_result.data:
             return
 
         org = org_result.data
-        plan = org.get("plan", "free")
         balance = org.get("credit_balance", 0)
 
-        # 1. Trial credits never expire — skip trial check
-        plan_status = org.get("plan_status", "active")
-
-        if plan_status == "expired":
-            raise DTEServiceError(
-                "Su cuenta no tiene creditos activos. "
-                "Recargue creditos en /dashboard/creditos",
-                "ACCOUNT_EXPIRED")
-
-        # 2. Check credit balance
+        # 1. Credit balance is the only emission gate (prepaid model)
         if balance <= 0:
             raise DTEServiceError(
                 "Sin creditos DTE. Recargue en /dashboard/creditos para continuar emitiendo.",
                 "NO_CREDITS")
 
-        # 3. Check max companies
-        max_companies = org.get("max_companies", 1)
-        if max_companies > 0 and max_companies < 999:
+        # 2. Optional manual override on company count
+        max_companies = org.get("max_companies")
+        if not is_unlimited_companies(max_companies):
             creds_count = self.db.table("dte_credentials").select(
                 "id", count="exact").eq("org_id", org_id).execute()
             companies_used = creds_count.count or 0
             if companies_used > max_companies:
                 raise DTEServiceError(
                     f"Limite de empresas alcanzado ({companies_used}/{max_companies}). "
-                    f"Recargue creditos para desbloquear mas empresas.",
+                    f"Contacte soporte para ampliar el limite.",
                     "COMPANIES_EXCEEDED")
 
     async def _deduct_credit(self, org_id: str, dte_id: str):

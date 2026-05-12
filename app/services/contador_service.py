@@ -228,38 +228,33 @@ async def add_client_org(
     Create a new client org and auto-link the contador as owner.
     Enforces plan limits on number of organizations.
     """
-    # 1. Plan enforcement — count current orgs
-    memberships = supabase.table("user_organizations").select(
-        "id"
-    ).eq("user_id", contador_user_id).execute()
-    current_count = len(memberships.data or [])
-
-    # Get contador's own org plan
+    # Company cap is DB-driven (organizations.max_companies on the contador's
+    # own org). NULL / 0 / >= UNLIMITED_MAX_COMPANIES means unlimited.
+    from app.services.plan_limits import is_unlimited_companies
     contador_org = supabase.table("organizations").select(
-        "plan"
+        "max_companies"
     ).eq("id", contador_org_id).single().execute()
-    plan = (contador_org.data or {}).get("plan", "free")
+    max_companies = (contador_org.data or {}).get("max_companies")
 
-    # Plan limits
-    plan_limits = {
-        "free": 1, "micro": 1, "basico": 2,
-        "profesional": 3, "contador": 53,
-        "empresarial": 10, "enterprise": 100,
-    }
-    max_orgs = plan_limits.get(plan, 2)
-
-    if current_count >= max_orgs:
-        raise ValueError(
-            f"Tu plan '{plan}' permite {max_orgs} empresas. "
-            f"Ya tienes {current_count}. Actualiza tu plan para agregar más."
-        )
+    if not is_unlimited_companies(max_companies):
+        memberships = supabase.table("user_organizations").select(
+            "id"
+        ).eq("user_id", contador_user_id).execute()
+        current_count = len(memberships.data or [])
+        if current_count >= max_companies:
+            raise ValueError(
+                f"Limite de empresas alcanzado ({current_count}/{max_companies}). "
+                f"Contacte soporte para ampliar el limite."
+            )
 
     # 2. Create new organization
+    from app.services.plan_limits import UNLIMITED_DTE_QUOTA, UNLIMITED_MAX_COMPANIES
     org_result = supabase.table("organizations").insert({
         "name": data["nombre"],
         "nit": data.get("nit", ""),
         "plan": "free",
-        "monthly_quota": 50,
+        "monthly_quota": UNLIMITED_DTE_QUOTA,
+        "max_companies": UNLIMITED_MAX_COMPANIES,
     }).execute()
 
     if not org_result.data:

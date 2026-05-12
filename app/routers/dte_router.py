@@ -1561,11 +1561,12 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             "monthly_quota, plan"
         ).eq("id", user["org_id"]).single().execute()
 
+        from app.services.plan_limits import UNLIMITED_DTE_QUOTA
         return {
             "stats": stats.data[0] if stats.data else {},
             "cuota": {
                 "usado": monthly.data or 0,
-                "limite": org.data.get("monthly_quota", 50) if org.data else 50,
+                "limite": (org.data.get("monthly_quota") if org.data else None) or UNLIMITED_DTE_QUOTA,
                 "plan": org.data.get("plan", "free") if org.data else "free",
             }
         }
