@@ -445,6 +445,10 @@ class DTEService:
                     if insert_result.data else ""
                 )
 
+                import json as _wa_json
+                wa_json_bytes = _wa_json.dumps(
+                    dte_dict, ensure_ascii=False
+                ).encode("utf-8")
                 asyncio.create_task(
                     express_send_whatsapp(
                         phone=receptor["telefono"],
@@ -457,7 +461,8 @@ class DTEService:
                         org_id=org_id,
                         dte_id=str(dte_row_id),
                         fecha_emision=dte_dict["identificacion"]["fecEmi"],
-                        send_json=False,
+                        send_json=True,
+                        json_bytes=wa_json_bytes,
                     )
                 )
             except Exception as wa_err:
