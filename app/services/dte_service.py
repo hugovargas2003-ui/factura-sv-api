@@ -201,7 +201,16 @@ class DTEService:
         cd_params: dict | None = None,
         sucursal_id: str | None = None,
         emitted_via: str = "web",
+        delivery_channels: list[str] | None = None,
     ) -> dict:
+        # None preserves the pre-selector behavior (send via both channels
+        # when the receptor has the corresponding contact). [] or ["none"]
+        # = emit and store but dispatch nothing.
+        channels = (
+            ["email", "whatsapp"]
+            if delivery_channels is None
+            else [c for c in delivery_channels if c and c != "none"]
+        )
         # 1. Validar credenciales y certificado
         creds = await self._get_credentials(org_id)
         is_pruebas_mode = creds.get("ambiente") == "00"
@@ -389,7 +398,7 @@ class DTEService:
                 logger.error(f"Inventory deduction failed (non-blocking): {inv_err}")
 
         # 11. Enviar PDF + JSON al receptor por email (solo si PROCESADO)
-        if estado == "procesado" and receptor.get("correo"):
+        if estado == "procesado" and "email" in channels and receptor.get("correo"):
             try:
                 from app.services.pdf_generator import DTEPdfGenerator
                 from app.services.email_service import send_dte_email
@@ -418,7 +427,7 @@ class DTEService:
                 logger.error(f"Email no enviado: {email_err}")
 
         # 12. Enviar PDF por WhatsApp automáticamente vía Express Engine (no-bloqueante)
-        if estado == "procesado" and receptor.get("telefono"):
+        if estado == "procesado" and "whatsapp" in channels and receptor.get("telefono"):
             try:
                 try:
                     wa_pdf = pdf_bytes

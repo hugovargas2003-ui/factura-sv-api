@@ -4,7 +4,7 @@ FACTURA-SV: Router de Emisión DTE
 Endpoints REST para emisión, preview, invalidación,
 configuración, catálogos, y dashboard.
 """
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from typing import Optional, List
@@ -115,6 +115,9 @@ class DTEEmitRequest(BaseModel):
     cd_params: Optional[dict] = None
     # Sucursal (si multi-sucursal)
     sucursal_id: Optional[str] = None
+    # Canales de entrega del PDF/JSON al receptor. None = comportamiento
+    # legacy (["email","whatsapp"]). [] o ["none"] = no enviar.
+    delivery_channels: Optional[list[str]] = None
 
 
 class InvalidarRequest(BaseModel):
@@ -385,6 +388,7 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
                 cd_params=data.cd_params,
                 sucursal_id=data.sucursal_id,
                 emitted_via=user.get("auth_source", "web"),
+                delivery_channels=data.delivery_channels,
             )
             return result
 
@@ -1134,10 +1138,16 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
     @router.post("/dte/batch/emit")
     async def batch_emit(
         file: UploadFile = File(...),
+        delivery_channels: Optional[str] = Form(None),
         service=Depends(get_dte_service),
         user=Depends(get_current_user),
     ):
-        """Emisión masiva: parsea CSV/XLSX y emite DTEs secuencialmente."""
+        """Emisión masiva: parsea CSV/XLSX y emite DTEs secuencialmente.
+
+        `delivery_channels` is a comma-separated string ("email,whatsapp",
+        "email", "whatsapp", or "none"). Omit to keep the legacy behavior
+        (send via both channels when the receptor has the contact data).
+        """
         role = user.get("role", "member")
         if role not in ("admin", "owner", "emisor"):
             raise HTTPException(403, "Sin permisos para emisión masiva")
@@ -1153,8 +1163,14 @@ def create_dte_router(get_dte_service, get_current_user) -> APIRouter:
             raise HTTPException(400, "Archivo sin datos")
         if len(rows) > 100:
             raise HTTPException(400, "Maximo 100 DTEs por batch")
+        channels_list = (
+            None
+            if delivery_channels is None
+            else [c.strip() for c in delivery_channels.split(",") if c.strip()]
+        )
         return await batch_service.emit_batch(
-            service, user["org_id"], user["user_id"], rows
+            service, user["org_id"], user["user_id"], rows,
+            delivery_channels=channels_list,
         )
 
     @router.get("/dte/batch/template")

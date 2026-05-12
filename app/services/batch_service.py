@@ -452,10 +452,13 @@ async def emit_batch(
     org_id: str,
     user_id: str,
     rows: list[dict],
+    *,
+    delivery_channels: list[str] | None = None,
 ) -> dict:
     """
     Emit DTEs sequentially from parsed rows.
-    Returns per-row results.
+    Returns per-row results. `delivery_channels` applies to every row in
+    the batch (single global selection from the UI).
     """
     results = []
     success_count = 0
@@ -482,6 +485,7 @@ async def emit_batch(
                 items=params["items"],
                 condicion_operacion=params["condicion_operacion"],
                 observaciones=params.get("observaciones"),
+                delivery_channels=delivery_channels,
             )
 
             results.append({
