@@ -76,14 +76,23 @@ class InvalidationService:
 
     TIMEOUT_SECONDS = 60
 
-    def build_invalidation_document(self, request: InvalidateRequest) -> dict:
+    def build_invalidation_document(
+        self,
+        request: InvalidateRequest,
+        environment: MHEnvironment | None = None,
+    ) -> dict:
         """
         Build the invalidation JSON document according to MH schema.
         All required fields are now validated in InvalidateRequest.
         This document will be signed and sent to the MH.
+
+        `environment` is the customer's ambiente (from mh_credentials). Falls
+        back to the global setting only when the caller cannot supply it; the
+        ambiente baked into the signed doc MUST match the server it's sent to.
         """
         now = datetime.now(timezone.utc)
-        ambiente = "00" if settings.mh_environment == MHEnvironment.TEST else "01"
+        env = environment if environment is not None else settings.mh_environment
+        ambiente = "00" if env == MHEnvironment.TEST else "01"
 
         return {
             "identificacion": {
@@ -150,12 +159,16 @@ class InvalidationService:
         Raises:
             InvalidationError
         """
-        url = get_mh_url("anulacion_dte")
+        # Use the token's environment (per-customer), not the global setting:
+        # a TEST customer must invalidate against apitest, a PROD customer
+        # against api.dtes. token_info.environment is set in _authenticate_mh
+        # from the customer's mh_credentials["ambiente"].
+        url = get_mh_url("anulacion_dte", token_info.environment)
 
         # Sign the invalidation document
         signed_jwt = sign_engine.sign_dte(cert_session, invalidation_doc)
 
-        ambiente = "00" if settings.mh_environment == MHEnvironment.TEST else "01"
+        ambiente = "00" if token_info.environment == MHEnvironment.TEST else "01"
 
         payload = {
             "ambiente": ambiente,

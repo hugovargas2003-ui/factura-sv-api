@@ -601,7 +601,10 @@ class DTEService:
         cert_session = sign_engine.load_certificate(cert_bytes, cert_pwd)
 
         try:
-            inv_doc = invalidation_service.build_invalidation_document(request=inv_request)
+            inv_doc = invalidation_service.build_invalidation_document(
+                request=inv_request,
+                environment=self._env_from_creds(creds),
+            )
             token_info = await self._authenticate_mh(org_id, creds)
             mh_result = await invalidation_service.invalidate(
                 token_info=token_info, cert_session=cert_session,
@@ -675,6 +678,7 @@ class DTEService:
             fecha_inicio=fecha_inicio, hora_inicio=hora_inicio,
             fecha_fin=fecha_fin, hora_fin=hora_fin,
             detalle_dte=detalle_dte,
+            environment=self._env_from_creds(creds),
         )
 
         cert_bytes = self.encryption.decrypt(
@@ -701,16 +705,21 @@ class DTEService:
             raise DTEServiceError("Configure sus credenciales MH antes de emitir", "NO_CREDENTIALS")
         return result.data
 
-    async def _authenticate_mh(self, org_id: str, creds: dict) -> TokenInfo:
-        # Per-customer environment: "01" → PRODUCTION, anything else → TEST.
-        # Auth, transmit and token TTL must all match this; the global
-        # settings.mh_environment is only a fallback.
+    @staticmethod
+    def _env_from_creds(creds: dict) -> "MHEnvironment":
+        # "01" → PRODUCTION, anything else (incl. "00" or missing) → TEST.
+        # Auth, transmit, the invalidation/contingency doc body, and the
+        # token TTL must all match this; the global settings.mh_environment
+        # is only a fallback when creds are absent.
         from app.core.config import MHEnvironment
-        customer_env = (
+        return (
             MHEnvironment.PRODUCTION
             if creds.get("ambiente") == "01"
             else MHEnvironment.TEST
         )
+
+    async def _authenticate_mh(self, org_id: str, creds: dict) -> TokenInfo:
+        customer_env = self._env_from_creds(creds)
 
         # 1. In-memory cache (fastest)
         cached = self._token_cache.get(org_id)

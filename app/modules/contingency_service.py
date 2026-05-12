@@ -27,8 +27,12 @@ class ContingencyService:
     def build_contingency_document(self, nit_emisor, nombre_emisor,
             nombre_comercial, cod_establecimiento, cod_punto_venta,
             telefono, correo, motivo, fecha_inicio, hora_inicio,
-            fecha_fin, hora_fin, detalle_dte):
-        ambiente = "00" if settings.mh_environment == MHEnvironment.TEST else "01"
+            fecha_fin, hora_fin, detalle_dte,
+            environment: MHEnvironment | None = None):
+        # The ambiente baked into the signed contingency doc MUST match the
+        # server it's sent to; pass the customer's environment, not the global.
+        env = environment if environment is not None else settings.mh_environment
+        ambiente = "00" if env == MHEnvironment.TEST else "01"
         return {
             "identificacion": {
                 "version": 3, "ambiente": ambiente,
@@ -60,9 +64,12 @@ class ContingencyService:
         }
 
     async def notify(self, token_info, cert_session, contingency_doc):
-        url = get_mh_url("contingencia")
+        # Route URL + payload by the token's environment (per-customer), not
+        # by the global setting. token_info.environment is set upstream from
+        # mh_credentials["ambiente"].
+        url = get_mh_url("contingencia", token_info.environment)
         signed_jws = sign_engine.sign_dte(cert_session, contingency_doc)
-        ambiente = "00" if settings.mh_environment == MHEnvironment.TEST else "01"
+        ambiente = "00" if token_info.environment == MHEnvironment.TEST else "01"
         payload = {"ambiente": ambiente, "idEnvio": 1, "version": 3, "documento": signed_jws}
         headers = {"Authorization": token_info.bearer, "Content-Type": "application/json"}
         cg = contingency_doc.get("identificacion", {}).get("codigoGeneracion", "?")
