@@ -169,17 +169,28 @@ async def list_organizations(
 
     result = query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
 
-    # Enrich with user count and DTE count per org
-    org_ids = [o["id"] for o in result.data]
+    # Enrich with user count, DTE count, and has_credentials per org.
+    # Previously this issued 3 queries per row (N+1) — for 50 orgs that's
+    # 150 round-trips. Now 3 IN-list queries total regardless of page size.
+    org_ids = [o["id"] for o in (result.data or [])]
+    user_counts: dict[str, int] = {}
+    dte_counts: dict[str, int] = {}
+    creds_present: set[str] = set()
+
+    if org_ids:
+        for row in (db.table("users").select("org_id").in_("org_id", org_ids).execute().data or []):
+            user_counts[row["org_id"]] = user_counts.get(row["org_id"], 0) + 1
+        for row in (db.table("dtes").select("org_id").in_("org_id", org_ids).execute().data or []):
+            dte_counts[row["org_id"]] = dte_counts.get(row["org_id"], 0) + 1
+        for row in (db.table("dte_credentials").select("org_id").in_("org_id", org_ids).execute().data or []):
+            creds_present.add(row["org_id"])
+
     enriched = []
-    for org in result.data:
+    for org in (result.data or []):
         oid = org["id"]
-        u_count = db.table("users").select("id", count="exact").eq("org_id", oid).execute().count or 0
-        d_count = db.table("dtes").select("id", count="exact").eq("org_id", oid).execute().count or 0
-        cred = db.table("dte_credentials").select("id").eq("org_id", oid).limit(1).execute().data
-        org["_user_count"] = u_count
-        org["_dte_count"] = d_count
-        org["_has_credentials"] = len(cred) > 0
+        org["_user_count"] = user_counts.get(oid, 0)
+        org["_dte_count"] = dte_counts.get(oid, 0)
+        org["_has_credentials"] = oid in creds_present
         enriched.append(org)
 
     return {"data": enriched, "total": result.count or 0, "limit": limit, "offset": offset}
@@ -275,16 +286,22 @@ async def list_users(
 
     result = query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
 
-    # Enrich with org name
+    # Enrich with org name — single IN query instead of one SELECT per row.
+    org_ids = {u["org_id"] for u in (result.data or []) if u.get("org_id")}
+    org_lookup: dict[str, dict] = {}
+    if org_ids:
+        org_rows = db.table("organizations").select(
+            "id, name, plan"
+        ).in_("id", list(org_ids)).execute()
+        for row in (org_rows.data or []):
+            org_lookup[row["id"]] = row
+
     enriched = []
-    org_cache = {}
-    for u in result.data:
+    for u in (result.data or []):
         oid = u.get("org_id")
-        if oid and oid not in org_cache:
-            org_r = db.table("organizations").select("name, plan").eq("id", oid).single().execute()
-            org_cache[oid] = org_r.data if org_r.data else {}
-        u["_org_name"] = org_cache.get(oid, {}).get("name", "—")
-        u["_org_plan"] = org_cache.get(oid, {}).get("plan", "—")
+        org = org_lookup.get(oid, {})
+        u["_org_name"] = org.get("name", "—")
+        u["_org_plan"] = org.get("plan", "—")
         enriched.append(u)
 
     return {"data": enriched, "total": result.count or 0, "limit": limit, "offset": offset}

@@ -310,6 +310,51 @@ async def resumen_fiscal_multi_org(
         fecha_hasta = f"{anio}-{mes + 1:02d}-01"
 
     empresas = []
+    org_ids = [o["id"] for o in orgs]
+
+    # Batch-load all per-org data with 4 IN-list queries instead of
+    # 4*len(orgs) round-trips. For a contador with 20 clients this drops
+    # the dashboard from 80 queries to 4 (plus the initial orgs list).
+    dte_counts: dict[str, int] = {}
+    if org_ids:
+        dte_rows = supabase.table("dtes") \
+            .select("org_id") \
+            .in_("org_id", org_ids) \
+            .in_("estado", ["procesado", "IMPORTADO"]) \
+            .gte("fecha_emision", fecha_desde) \
+            .lt("fecha_emision", fecha_hasta) \
+            .execute()
+        for row in (dte_rows.data or []):
+            dte_counts[row["org_id"]] = dte_counts.get(row["org_id"], 0) + 1
+
+    renta_by_org: dict[str, dict] = {}
+    if org_ids:
+        renta_rows = supabase.table("renta_periodos") \
+            .select("org_id, status, total_retenciones, total_registros") \
+            .in_("org_id", org_ids) \
+            .eq("periodo", periodo) \
+            .execute()
+        for row in (renta_rows.data or []):
+            renta_by_org[row["org_id"]] = row
+
+    planilla_by_org: dict[str, dict] = {}
+    if org_ids:
+        planilla_rows = supabase.table("planilla_resumen") \
+            .select("org_id, status, total_empleados, total_isr") \
+            .in_("org_id", org_ids) \
+            .eq("periodo", periodo) \
+            .execute()
+        for row in (planilla_rows.data or []):
+            planilla_by_org[row["org_id"]] = row
+
+    credit_by_org: dict[str, int] = {}
+    if org_ids:
+        credit_rows = supabase.table("organizations") \
+            .select("id, credit_balance") \
+            .in_("id", org_ids) \
+            .execute()
+        for row in (credit_rows.data or []):
+            credit_by_org[row["id"]] = row.get("credit_balance", 0)
 
     for org in orgs:
         org_id = org["id"]
@@ -319,26 +364,14 @@ async def resumen_fiscal_multi_org(
             "nit": org.get("nit", ""),
         }
 
-        # F-07: Check if DTEs exist for period
-        dtes = supabase.table("dtes") \
-            .select("id", count="exact") \
-            .eq("org_id", org_id) \
-            .in_("estado", ["procesado", "IMPORTADO"]) \
-            .gte("fecha_emision", fecha_desde) \
-            .lt("fecha_emision", fecha_hasta) \
-            .execute()
-        dte_count = dtes.count if hasattr(dtes, 'count') and dtes.count else len(dtes.data or [])
+        # F-07
+        dte_count = dte_counts.get(org_id, 0)
         org_data["f07_dtes"] = dte_count
         org_data["f07_status"] = "ok" if dte_count > 0 else "empty"
 
-        # F-14: Check renta_periodos status
-        renta = supabase.table("renta_periodos") \
-            .select("status, total_retenciones, total_registros") \
-            .eq("org_id", org_id) \
-            .eq("periodo", periodo) \
-            .execute()
-        if renta.data:
-            r = renta.data[0]
+        # F-14
+        r = renta_by_org.get(org_id)
+        if r:
             org_data["f14_status"] = r.get("status", "draft")
             org_data["f14_retenciones"] = r.get("total_retenciones", 0)
             org_data["f14_registros"] = r.get("total_registros", 0)
@@ -347,14 +380,9 @@ async def resumen_fiscal_multi_org(
             org_data["f14_retenciones"] = 0
             org_data["f14_registros"] = 0
 
-        # Planilla: Check if confirmed for period
-        planilla = supabase.table("planilla_resumen") \
-            .select("status, total_empleados, total_isr") \
-            .eq("org_id", org_id) \
-            .eq("periodo", periodo) \
-            .execute()
-        if planilla.data:
-            p = planilla.data[0]
+        # Planilla
+        p = planilla_by_org.get(org_id)
+        if p:
             org_data["planilla_status"] = p.get("status", "draft")
             org_data["planilla_empleados"] = p.get("total_empleados", 0)
             org_data["planilla_isr"] = p.get("total_isr", 0)
@@ -364,11 +392,7 @@ async def resumen_fiscal_multi_org(
             org_data["planilla_isr"] = 0
 
         # Créditos
-        credits = supabase.table("organizations") \
-            .select("credit_balance") \
-            .eq("id", org_id) \
-            .execute()
-        org_data["creditos"] = credits.data[0].get("credit_balance", 0) if credits.data else 0
+        org_data["creditos"] = credit_by_org.get(org_id, 0)
 
         # Overall health
         statuses = [org_data["f07_status"], org_data["f14_status"], org_data["planilla_status"]]

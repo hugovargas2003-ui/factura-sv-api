@@ -801,8 +801,16 @@ class DTEService:
                     "COMPANIES_EXCEEDED")
 
     async def _deduct_credit(self, org_id: str, dte_id: str):
-        """Deduct 1 credit after successful DTE emission.
-        Supports billing pool: deducts from billing_org if configured."""
+        """Atomically deduct 1 credit after successful DTE emission.
+
+        Uses an optimistic-lock pattern (UPDATE WHERE credit_balance = N)
+        so two concurrent emissions cannot both decrement the same starting
+        balance. If the conditional update affects zero rows, the balance
+        moved between SELECT and UPDATE — re-read and retry.
+
+        Supports billing pool: if `org_id` has billing_org_id, the parent
+        balance is the one debited.
+        """
         try:
             owner = self.db.table("users").select("email").eq(
                 "org_id", org_id).limit(1).execute()
@@ -812,18 +820,47 @@ class DTEService:
             # Resolve billing org (pool support)
             billing_id = await self._resolve_billing_org(org_id)
 
-            org = self.db.table("organizations").select(
-                "credit_balance"
-            ).eq("id", billing_id).single().execute()
-            if not org.data:
+            new_balance: int | None = None
+            for attempt in range(self._DEDUCT_MAX_RETRIES):
+                org = self.db.table("organizations").select(
+                    "credit_balance"
+                ).eq("id", billing_id).single().execute()
+                if not org.data:
+                    return
+
+                current = org.data.get("credit_balance")
+                if current is None or current < 1:
+                    # _check_quota should have blocked us, but a concurrent
+                    # emission may have drained the balance between then and
+                    # now. Record the deficit and move on — the DTE was
+                    # already accepted by MH, refusing the deduction here
+                    # would let the customer emit for free.
+                    logger.error(
+                        f"Credit deduction underflow: org={billing_id} "
+                        f"balance={current} dte={dte_id}"
+                    )
+                    return
+
+                attempted_new = current - 1
+                update_result = self.db.table("organizations").update({
+                    "credit_balance": attempted_new,
+                }).eq("id", billing_id).eq("credit_balance", current).execute()
+
+                if update_result.data:
+                    new_balance = attempted_new
+                    break
+                # CAS failure → another writer modified balance. Retry.
+                logger.warning(
+                    f"Credit deduction CAS retry {attempt + 1}/"
+                    f"{self._DEDUCT_MAX_RETRIES} org={billing_id}"
+                )
+            else:
+                logger.error(
+                    f"Credit deduction gave up after "
+                    f"{self._DEDUCT_MAX_RETRIES} retries: org={billing_id} "
+                    f"dte={dte_id}"
+                )
                 return
-
-            current = org.data["credit_balance"]
-            new_balance = max(0, current - 1)
-
-            self.db.table("organizations").update({
-                "credit_balance": new_balance,
-            }).eq("id", billing_id).execute()
 
             owner_email = owner.data[0]["email"] if owner.data else None
             pool_desc = f"DTE {dte_id} emit_by:{org_id}" if billing_id != org_id else f"DTE {dte_id}"
@@ -842,6 +879,8 @@ class DTEService:
             logger.info(f"Credit deducted: org={org_id}{pool_tag} balance={new_balance}")
         except Exception as e:
             logger.error(f"Credit deduction failed: {e}")
+
+    _DEDUCT_MAX_RETRIES = 5
 
     async def _revert_inventory(self, org_id: str, numero_control: str, user_id: str):
         """Revert inventory movements when a DTE is invalidated (non-blocking)."""

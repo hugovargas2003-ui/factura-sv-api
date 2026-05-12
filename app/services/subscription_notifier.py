@@ -15,14 +15,18 @@ Dedup: subscription_email_log table prevents duplicate sends.
 
 import logging
 import json
+import os
 import httpx
 from datetime import datetime, timedelta
 from typing import Optional
 
 logger = logging.getLogger("subscription_notifier")
 
-# Same Google Script used by email_service.py (production-proven)
-GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw5CyNlSex8xL2vJBxSjg4DOCjwzUkQgiUwgJPO1L7t9H4Z8ZCJ3glCP6chJ4Vtru6ADg/exec"
+# Shares DTE_EMAIL_WEBHOOK_URL with email_service.py and credit_alert_service.py
+GOOGLE_SCRIPT_URL = os.getenv(
+    "DTE_EMAIL_WEBHOOK_URL",
+    "https://script.google.com/macros/s/AKfycbw5CyNlSex8xL2vJBxSjg4DOCjwzUkQgiUwgJPO1L7t9H4Z8ZCJ3glCP6chJ4Vtru6ADg/exec",
+)
 
 PLAN_NAMES = {
     "free": "Gratis",

@@ -13,6 +13,7 @@ Dedup: subscription_email_log table prevents duplicate sends.
 """
 
 import logging
+import os
 import httpx
 from datetime import datetime, timedelta
 from typing import Optional
@@ -21,10 +22,17 @@ from app.services.notification_service import create_notification
 
 logger = logging.getLogger("credit_alert_service")
 
-# Same Google Script used by email_service.py (production-proven)
-GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw5CyNlSex8xL2vJBxSjg4DOCjwzUkQgiUwgJPO1L7t9H4Z8ZCJ3glCP6chJ4Vtru6ADg/exec"
+# Same Google Script used by email_service.py — share its env var so a
+# single Railway secret rotates all three call sites.
+GOOGLE_SCRIPT_URL = os.getenv(
+    "DTE_EMAIL_WEBHOOK_URL",
+    "https://script.google.com/macros/s/AKfycbw5CyNlSex8xL2vJBxSjg4DOCjwzUkQgiUwgJPO1L7t9H4Z8ZCJ3glCP6chJ4Vtru6ADg/exec",
+)
 
-RECHARGE_URL = "https://factura-sv.algoritmos.io/dashboard/creditos"
+RECHARGE_URL = os.getenv(
+    "DTE_RECHARGE_URL",
+    "https://factura-sv.algoritmos.io/dashboard/creditos",
+)
 
 # Alert levels: (type_key, max_balance, min_balance, cooldown_hours)
 # Order matters — lowest balance first for priority selection
