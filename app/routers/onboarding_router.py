@@ -21,7 +21,22 @@ security = HTTPBearer()
 
 router = APIRouter(prefix="/api/v1/onboarding", tags=["onboarding"])
 
-WELCOME_CREDITS = 10
+_DEFAULT_TRIAL_GRANT = 10
+
+
+def _welcome_credits(db: SupabaseClient) -> int:
+    """Read trial grant from platform_config so admin changes take effect
+    immediately. Pricing endpoint exposes the same key — keeps the
+    marketing copy and the actual grant in sync."""
+    try:
+        row = db.table("platform_config").select("value").eq(
+            "key", "pricing_trial_credits"
+        ).maybe_single().execute()
+        if row and row.data:
+            return int(row.data["value"])
+    except Exception:
+        pass
+    return _DEFAULT_TRIAL_GRANT
 
 
 # ── JWT-only auth (no users table required) ──
@@ -130,12 +145,13 @@ async def create_first_organization(
 
     # 3. Create organization (let DB defaults handle plan, quota, status)
     link_code = f"FSV-{secrets.token_hex(2).upper()}-{secrets.token_hex(2).upper()}"
+    welcome_credits = _welcome_credits(db)
 
     try:
         org_result = db.table("organizations").insert({
             "name": body.nombre.strip(),
             "nit": nit or None,
-            "credit_balance": WELCOME_CREDITS,
+            "credit_balance": welcome_credits,
             "link_code": link_code,
             "link_code_active": True,
             "is_active": True,
@@ -185,10 +201,10 @@ async def create_first_organization(
         db.table("credit_transactions").insert({
             "org_id": org_id,
             "user_email": email,
-            "amount": WELCOME_CREDITS,
+            "amount": welcome_credits,
             "type": "trial_grant",
             "description": "Créditos de bienvenida — registro self-service",
-            "balance_after": WELCOME_CREDITS,
+            "balance_after": welcome_credits,
         }).execute()
     except Exception as e:
         logger.error(f"Onboarding credit_transactions insert failed: {e}")
@@ -196,13 +212,13 @@ async def create_first_organization(
 
     logger.info(
         f"Self-service onboarding complete: user={email}, org={body.nombre.strip()}, "
-        f"org_id={org_id}, credits={WELCOME_CREDITS}"
+        f"org_id={org_id}, credits={welcome_credits}"
     )
 
     return {
         "success": True,
         "org_id": org_id,
         "link_code": link_code,
-        "creditos": WELCOME_CREDITS,
-        "message": f"Organización '{body.nombre.strip()}' creada con {WELCOME_CREDITS} créditos de bienvenida",
+        "creditos": welcome_credits,
+        "message": f"Organización '{body.nombre.strip()}' creada con {welcome_credits} créditos de bienvenida",
     }
