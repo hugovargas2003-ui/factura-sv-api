@@ -863,14 +863,23 @@ class DTEService:
                 return
 
             owner_email = owner.data[0]["email"] if owner.data else None
-            pool_desc = f"DTE {dte_id} emit_by:{org_id}" if billing_id != org_id else f"DTE {dte_id}"
+            # credit_transactions has no org_id column. The billing org
+            # (who pays) and the emitter org (who gets the DTE under
+            # their name) both live in the description so admin pool
+            # reports can reconstruct them. Format:
+            #   "DTE <uuid> billed_to:<billing_org> emit_by:<emitter_org>"
+            # `emit_by` is only included when the emitter differs from
+            # the billing org (i.e. the org is part of a billing pool).
+            if billing_id != org_id:
+                description = f"DTE {dte_id} billed_to:{billing_id} emit_by:{org_id}"
+            else:
+                description = f"DTE {dte_id} billed_to:{billing_id}"
             self.db.table("credit_transactions").insert({
-                "org_id": billing_id,
                 "user_email": owner_email,
                 "type": "usage",
                 "amount": -1,
                 "balance_after": new_balance,
-                "description": pool_desc,
+                "description": description,
                 "service": "dte_emission",
                 "job_id": dte_id,
             }).execute()

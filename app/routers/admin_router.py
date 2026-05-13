@@ -728,13 +728,17 @@ async def admin_create_organization(
         try:
             owner = db.table("users").select("email").eq("org_id", org_id).limit(1).execute()
             owner_email = owner.data[0]["email"] if owner.data else "admin@factura-sv.com"
+            # credit_transactions has no org_id column — embed org=<uuid>
+            # in the description so the audit trail is intact.
             db.table("credit_transactions").insert({
-                "org_id": org_id,
                 "user_email": owner_email,
                 "type": "cortesia",
                 "amount": body.initial_credits,
                 "balance_after": body.initial_credits,
-                "description": f"Créditos de bienvenida (admin onboarding). Creado por {admin.get('email', 'admin')}",
+                "description": (
+                    f"Créditos de bienvenida (admin onboarding) org={org_id}. "
+                    f"Creado por {admin.get('email', 'admin')}"
+                ),
             }).execute()
         except Exception:
             pass  # Non-blocking
@@ -1023,12 +1027,11 @@ async def admin_manage_credits(
     owner = supabase.table("users").select("email").eq("org_id", org_id).limit(1).execute()
     owner_email = owner.data[0]["email"] if owner.data else "admin@factura-sv.com"
     supabase.table("credit_transactions").insert({
-        "org_id": org_id,
         "user_email": owner_email,
         "type": "purchase" if amount > 0 else "usage",
         "amount": amount,
         "balance_after": new_balance,
-        "description": f"Admin adjustment: {reason}",
+        "description": f"Admin adjustment org={org_id}: {reason}",
     }).execute()
 
     return {"previous_balance": current, "adjustment": amount, "new_balance": new_balance, "reason": reason}
@@ -1076,12 +1079,14 @@ async def admin_cash_payment(
     owner = supabase.table("users").select("email").eq("org_id", org_id).limit(1).execute()
     owner_email = owner.data[0]["email"] if owner.data else "admin@factura-sv.com"
     supabase.table("credit_transactions").insert({
-        "org_id": org_id,
         "user_email": owner_email,
         "type": "purchase",
         "amount": cantidad,
         "balance_after": new_balance,
-        "description": f"Cash payment: {cantidad} credits, ${amount_received:.2f} received. Ref: {payment_ref}",
+        "description": (
+            f"Cash payment org={org_id}: {cantidad} credits, "
+            f"${amount_received:.2f} received. Ref: {payment_ref}"
+        ),
     }).execute()
 
     # 4. Auto-emit invoice (non-blocking)
@@ -1176,12 +1181,14 @@ async def admin_verify_transfer(
             owner = supabase.table("users").select("email").eq("org_id", org_id).limit(1).execute()
             owner_email = owner.data[0]["email"] if owner.data else "admin@factura-sv.com"
             supabase.table("credit_transactions").insert({
-                "org_id": org_id,
                 "user_email": owner_email,
                 "type": "reversal",
                 "amount": -credits_to_reverse,
                 "balance_after": new_balance,
-                "description": f"Fraud reversal for tx:{transaction_id}. Transferencia no verificada. {admin_notes}",
+                "description": (
+                    f"Fraud reversal org={org_id} for tx:{transaction_id}. "
+                    f"Transferencia no verificada. {admin_notes}"
+                ),
             }).execute()
 
         # Mark original transaction as fraudulent (append to description)
@@ -1277,36 +1284,41 @@ async def admin_pool_usage(
     if not parent.data:
         raise HTTPException(404, "Organizacion no encontrada")
 
-    # Get usage per child from credit_transactions
+    # Get usage per child from credit_transactions.
+    # credit_transactions has no org_id column. DTEService._deduct_credit
+    # writes the billing org and emitter org into the description as
+    #   "DTE <uuid> billed_to:<parent> emit_by:<child>"   (pool emission)
+    #   "DTE <uuid> billed_to:<parent>"                   (direct emission)
+    # so we filter by ILIKE on those markers.
     child_ids = [c["id"] for c in (children.data or [])]
     usage_map = {}
+    direct_usage = 0
 
-    if child_ids:
-        # Get all usage transactions that reference child orgs in admin_notes
-        txs = supabase.table("credit_transactions").select(
-            "amount, admin_notes, created_at"
-        ).eq("org_id", org_id).eq("type", "usage").order("created_at", desc=True).limit(500).execute()
+    txs = supabase.table("credit_transactions").select(
+        "amount, description, created_at"
+    ).ilike("description", f"%billed_to:{org_id}%").eq(
+        "type", "usage"
+    ).order("created_at", desc=True).limit(500).execute()
 
-        for tx in (txs.data or []):
-            notes = tx.get("admin_notes") or ""
-            if notes.startswith("emit_by:"):
-                child_id = notes.replace("emit_by:", "")
-                usage_map[child_id] = usage_map.get(child_id, 0) + 1
-
-    # Also count direct usage (parent emitting for itself)
-    direct_count = supabase.table("credit_transactions").select(
-        "id", count="exact"
-    ).eq("org_id", org_id).eq("type", "usage").is_("admin_notes", "null").execute()
+    for tx in (txs.data or []):
+        desc = tx.get("description") or ""
+        marker = "emit_by:"
+        idx = desc.find(marker)
+        if idx >= 0:
+            child_id = desc[idx + len(marker):].split()[0]
+            usage_map[child_id] = usage_map.get(child_id, 0) + 1
+        else:
+            direct_usage += 1
 
     result = {
         "parent": {
             "id": org_id,
             "name": parent.data["name"],
             "credit_balance": parent.data["credit_balance"],
-            "direct_usage": direct_count.count or 0,
+            "direct_usage": direct_usage,
         },
         "children": [],
-        "total_pool_usage": (direct_count.count or 0),
+        "total_pool_usage": direct_usage,
     }
 
     for child in (children.data or []):
@@ -1330,23 +1342,44 @@ async def admin_list_credit_transactions(
     admin: dict = Depends(require_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
-    """List recent credit transactions across all orgs."""
+    """List recent credit transactions across all orgs.
+
+    credit_transactions has no org_id column. Each row's owning org is
+    derived via user_email → users.org_id → organizations.name in two
+    IN-list queries (avoiding N+1 per row).
+    """
     txs = supabase.table("credit_transactions").select(
-        "id, org_id, type, amount, balance, unit_price, total_paid, payment_ref, "
-        "invoice_codigo, invoice_tipo, verified, verified_at, bank_ref, admin_notes, created_at"
+        "id, user_email, type, amount, balance_after, description, "
+        "stripe_payment_id, service, job_id, created_at"
     ).order("created_at", desc=True).limit(200).execute()
 
-    # Enrich with org names
-    org_ids = list(set(t["org_id"] for t in (txs.data or [])))
-    org_map = {}
+    rows = txs.data or []
+    emails = list({r["user_email"] for r in rows if r.get("user_email")})
+
+    # email → org_id (one IN query)
+    email_to_org: dict[str, str] = {}
+    if emails:
+        users_rows = supabase.table("users").select(
+            "email, org_id"
+        ).in_("email", emails).execute()
+        for u in (users_rows.data or []):
+            email_to_org[u["email"]] = u.get("org_id") or ""
+
+    # org_id → org_name (second IN query)
+    org_ids = list({oid for oid in email_to_org.values() if oid})
+    org_map: dict[str, str] = {}
     if org_ids:
-        orgs = supabase.table("organizations").select("id, name").in_("id", org_ids).execute()
+        orgs = supabase.table("organizations").select(
+            "id, name"
+        ).in_("id", org_ids).execute()
         org_map = {o["id"]: o["name"] for o in (orgs.data or [])}
 
-    for tx in (txs.data or []):
-        tx["org_name"] = org_map.get(tx["org_id"], "Unknown")
+    for tx in rows:
+        oid = email_to_org.get(tx.get("user_email", ""), "")
+        tx["org_id"] = oid  # synthetic — convenience for the admin UI
+        tx["org_name"] = org_map.get(oid, "—")
 
-    return {"data": txs.data or [], "total": len(txs.data or [])}
+    return {"data": rows, "total": len(rows)}
 
 
 # ══════════════════════════════════════════════════════════
