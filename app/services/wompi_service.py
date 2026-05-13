@@ -145,6 +145,12 @@ async def create_payment_link(
         raise WompiError("Monto y créditos deben ser positivos", status=400)
 
     reference = f"FSV-{credits}cr-{org_id[:8]}-{int(time.time())}"
+    # Wompi rejects EnlacePago creation unless at least one notification
+    # channel is configured — either a webhook or emailsNotificacion.
+    # We don't run a Wompi webhook yet, so we attach the customer email
+    # (falling back to support so the link still creates if the user has
+    # no email on file).
+    notify_email = (customer_email or "").strip() or "contacto@algoritmos.io"
     token = await _get_access_token()
 
     # Per docs, minimum body is identificadorEnlaceComercio + monto +
@@ -171,6 +177,7 @@ async def create_payment_link(
             "esCantidadEditable": False,
             "cantidadPorDefecto": 1,
             "duracionInactividad": 10,
+            "emailsNotificacion": notify_email,
         },
         "infoProducto": {
             "nombreCliente": org_name,

@@ -83,12 +83,17 @@ async def wompi_checkout(
             "credit_balance"
         ).eq("id", org_id).single().execute()
         current_balance = (current.data or {}).get("credit_balance", 0)
+        # credit_transactions has no org_id column — keyed by user_email.
+        # The org_id is recoverable from the Wompi link's infoProducto on
+        # verify, or from the user's JWT.
         service.db.table("credit_transactions").insert({
-            "org_id": org_id,
             "user_email": email,
             "amount": credits,
             "type": "wompi_pending",
-            "description": f"Wompi link {result['payment_id']}: {credits} créditos (${amount})",
+            "description": (
+                f"Wompi link {result['payment_id']}: {credits} créditos "
+                f"(${amount}) org={org_id}"
+            ),
             "balance_after": current_balance,
             "stripe_payment_id": result["payment_id"],  # column reused as generic payment_ref
             "service": "credit_purchase",
@@ -159,12 +164,20 @@ async def wompi_verify(
     id_enlace = txn.get("id_enlace") or ""
 
     if (not target_org_id or not credits) and id_enlace:
+        # credit_transactions has no org_id column — the org we stored at
+        # checkout time is embedded in the description as "org=<uuid>".
         pending = service.db.table("credit_transactions").select(
-            "org_id, amount"
+            "amount, description"
         ).eq("stripe_payment_id", id_enlace).eq("type", "wompi_pending").limit(1).execute()
         if pending.data:
-            target_org_id = target_org_id or pending.data[0].get("org_id", "")
-            credits = credits or int(pending.data[0].get("amount") or 0)
+            row = pending.data[0]
+            credits = credits or int(row.get("amount") or 0)
+            if not target_org_id:
+                desc = row.get("description") or ""
+                marker = "org="
+                idx = desc.find(marker)
+                if idx >= 0:
+                    target_org_id = desc[idx + len(marker):].split()[0]
 
     if not target_org_id:
         target_org_id = user["org_id"]
@@ -212,14 +225,14 @@ async def wompi_verify(
         )
 
     amount = round(credits * PRICE_PER_DTE_USD, 2)
+    # No org_id column — embed it in description so audit trail is intact.
     service.db.table("credit_transactions").insert({
-        "org_id": target_org_id,
         "user_email": user.get("email", ""),
         "amount": credits,
         "type": "purchase",
         "description": (
             f"Compra Wompi: {credits} créditos (${amount}) "
-            f"txn={id_transaccion} enlace={id_enlace}"
+            f"txn={id_transaccion} enlace={id_enlace} org={target_org_id}"
         ),
         "balance_after": new_balance,
         "stripe_payment_id": id_transaccion,  # idempotency key

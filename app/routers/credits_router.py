@@ -48,13 +48,15 @@ class BalanceResponse(BaseModel):
     alert_level: str | None = None  # "yellow" | "red" | None
 
 class CreditTransaction(BaseModel):
+    """Row shape returned by /credits/history. Matches the
+    credit_transactions DB schema (no org_id column — rows are keyed
+    by user_email)."""
     id: str
     type: str
     amount: int
-    balance: int
-    unit_price: float | None
-    total_paid: float | None
-    payment_ref: str | None
+    balance_after: int | None
+    description: str | None
+    stripe_payment_id: str | None  # reused as generic payment_ref (Wompi/Stripe/transfer)
     created_at: str
 
 
@@ -137,10 +139,12 @@ async def get_balance(user=Depends(get_current_user), supabase=Depends(get_supab
     if balance <= params["alert_critical"]:
         alert_level = "red"
     elif balance > 0:
-        # Check against last purchase to determine yellow alert
+        # Check against last purchase to determine yellow alert.
+        # credit_transactions is keyed by user_email — there is no org_id
+        # column on that table.
         last_purchase = supabase.table("credit_transactions").select(
             "amount"
-        ).eq("org_id", user["org_id"]).eq(
+        ).eq("user_email", user.get("email", "")).eq(
             "type", "purchase"
         ).order("created_at", desc=True).limit(1).execute()
 
@@ -242,12 +246,16 @@ async def credit_history(
     user=Depends(get_current_user),
     supabase=Depends(get_supabase),
 ):
-    """Get credit transaction history with pagination."""
-    org_id = user["org_id"]
+    """Get credit transaction history with pagination.
+
+    credit_transactions has no org_id column — rows are keyed by
+    user_email (each org's owner email).
+    """
     query = supabase.table("credit_transactions").select(
-        "id, type, amount, balance, unit_price, total_paid, payment_ref, created_at",
+        "id, type, amount, balance_after, description, "
+        "stripe_payment_id, service, created_at",
         count="exact",
-    ).eq("org_id", org_id)
+    ).eq("user_email", user.get("email", ""))
 
     if type_filter:
         query = query.eq("type", type_filter)
