@@ -106,18 +106,19 @@ class TestTokenExchange:
 class TestCreatePaymentLink:
     @pytest.mark.asyncio
     async def test_happy_path(self):
+        """Endpoint is /EnlacePago (singular); response carries urlEnlace + idEnlace."""
         token_resp = _make_response(200, {"access_token": "tok", "expires_in": 3600})
         link_resp = _make_response(201, {
             "idEnlace": "WLINK-123",
-            "urlCompleta": "https://checkout.wompi.sv/pay/WLINK-123",
+            "urlEnlace": "https://checkout.wompi.sv/pay/WLINK-123",
             "monto": 10.0,
         })
         mock_client = _MockHttpClient({
             "connect/token": token_resp,
-            "EnlacesPago": link_resp,
+            "/EnlacePago": link_resp,
         })
         with patch("httpx.AsyncClient", return_value=mock_client):
-            result = await create_payment_link(
+            result = await wompi_service.create_payment_link(
                 amount_usd=10.0, credits=100,
                 org_id="org-uuid-1234abcd",
                 org_name="ACME", customer_email="a@b.com",
@@ -128,9 +129,53 @@ class TestCreatePaymentLink:
         assert result["reference"].startswith("FSV-100cr-")
 
     @pytest.mark.asyncio
+    async def test_posts_to_singular_endpoint(self):
+        """Regression guard: must POST to /EnlacePago, not /EnlacesPago."""
+        token_resp = _make_response(200, {"access_token": "tok", "expires_in": 3600})
+        link_resp = _make_response(201, {"idEnlace": "X", "urlEnlace": "https://x"})
+        mock_client = _MockHttpClient({
+            "connect/token": token_resp,
+            "/EnlacePago": link_resp,
+        })
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            await wompi_service.create_payment_link(
+                amount_usd=10.0, credits=100,
+                org_id="o", org_name="x", customer_email="a@b.com",
+                return_url="https://e/",
+            )
+        posted = [c for c in mock_client.calls if c[0] == "POST"]
+        link_calls = [c for c in posted if "EnlacePago" in c[1]]
+        assert link_calls, "should have POSTed to an EnlacePago URL"
+        for _method, url, _ in link_calls:
+            assert "/EnlacePago" in url and "/EnlacesPago" not in url, (
+                f"posted to {url} — should be singular /EnlacePago"
+            )
+
+    @pytest.mark.asyncio
+    async def test_minimum_required_body_fields(self):
+        """Body must include the 3 required fields per docs."""
+        token_resp = _make_response(200, {"access_token": "tok", "expires_in": 3600})
+        link_resp = _make_response(201, {"idEnlace": "X", "urlEnlace": "https://x"})
+        mock_client = _MockHttpClient({
+            "connect/token": token_resp,
+            "/EnlacePago": link_resp,
+        })
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            await wompi_service.create_payment_link(
+                amount_usd=10.0, credits=100,
+                org_id="o", org_name="x", customer_email="a@b.com",
+                return_url="https://e/",
+            )
+        link_call = [c for c in mock_client.calls if "/EnlacePago" in c[1]][0]
+        body = link_call[2].get("json", {})
+        assert "identificadorEnlaceComercio" in body
+        assert "monto" in body
+        assert "nombreProducto" in body
+
+    @pytest.mark.asyncio
     async def test_rejects_zero_amount(self):
         with pytest.raises(WompiError):
-            await create_payment_link(
+            await wompi_service.create_payment_link(
                 amount_usd=0, credits=10,
                 org_id="o", org_name="x", customer_email="a@b.com",
                 return_url="https://e/",
@@ -142,59 +187,96 @@ class TestCreatePaymentLink:
         bad_resp = _make_response(200, {"monto": 10.0})  # missing url + id
         mock_client = _MockHttpClient({
             "connect/token": token_resp,
-            "EnlacesPago": bad_resp,
+            "/EnlacePago": bad_resp,
         })
         with patch("httpx.AsyncClient", return_value=mock_client):
             with pytest.raises(WompiError):
-                await create_payment_link(
+                await wompi_service.create_payment_link(
                     amount_usd=10.0, credits=100,
                     org_id="o", org_name="x", customer_email="a@b.com",
                     return_url="https://e/",
                 )
 
 
-# ─── verify_payment ──────────────────────────────────────────────
+# ─── get_transaction / verify ────────────────────────────────────
 
-class TestVerifyPayment:
+class TestGetTransaction:
     @pytest.mark.asyncio
-    async def test_paid(self):
+    async def test_paid_when_both_flags_true(self):
+        """is_paid only when esReal AND esAprobada are both truthy."""
         token_resp = _make_response(200, {"access_token": "tok", "expires_in": 3600})
-        verify_resp = _make_response(200, {
+        txn_resp = _make_response(200, {
+            "esReal": True,
+            "esAprobada": True,
             "monto": 10.0,
+            "idEnlace": "WLINK-123",
+            "identificadorEnlaceComercio": "FSV-100cr-org-1234",
             "infoProducto": {
                 "identificadorOrg": "org-abc",
                 "cantidadCreditos": "100",
             },
-            "transaccionCompra": {
-                "resultado": {"estado": "AprobAdA"},
-            },
         })
         mock_client = _MockHttpClient({
             "connect/token": token_resp,
-            "EnlacesPago/": verify_resp,
+            "/TransaccionCompra/": txn_resp,
         })
         with patch("httpx.AsyncClient", return_value=mock_client):
-            info = await verify_payment("WLINK-123")
+            info = await wompi_service.get_transaction("TXN-9999")
         assert info["is_paid"] is True
-        assert info["credits"] == 100
-        assert info["org_id"] == "org-abc"
         assert info["amount"] == 10.0
+        assert info["id_enlace"] == "WLINK-123"
+        assert info["reference"] == "FSV-100cr-org-1234"
+        assert info["org_id_from_info"] == "org-abc"
+        assert info["credits_from_info"] == 100
 
     @pytest.mark.asyncio
-    async def test_pending(self):
+    async def test_pending_when_only_real_true(self):
         token_resp = _make_response(200, {"access_token": "tok", "expires_in": 3600})
-        verify_resp = _make_response(200, {
+        txn_resp = _make_response(200, {
+            "esReal": True,
+            "esAprobada": False,
             "monto": 10.0,
-            "infoProducto": {"cantidadCreditos": "100"},
-            # No transaccionCompra → not paid yet
         })
         mock_client = _MockHttpClient({
             "connect/token": token_resp,
-            "EnlacesPago/": verify_resp,
+            "/TransaccionCompra/": txn_resp,
         })
         with patch("httpx.AsyncClient", return_value=mock_client):
-            info = await verify_payment("WLINK-123")
+            info = await wompi_service.get_transaction("TXN-X")
         assert info["is_paid"] is False
+
+    @pytest.mark.asyncio
+    async def test_pending_when_test_mode(self):
+        """esReal=false (test env) blocks settlement even if esAprobada=true."""
+        token_resp = _make_response(200, {"access_token": "tok", "expires_in": 3600})
+        txn_resp = _make_response(200, {
+            "esReal": False,
+            "esAprobada": True,
+        })
+        mock_client = _MockHttpClient({
+            "connect/token": token_resp,
+            "/TransaccionCompra/": txn_resp,
+        })
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            info = await wompi_service.get_transaction("TXN-X")
+        assert info["is_paid"] is False
+
+    @pytest.mark.asyncio
+    async def test_string_booleans_accepted(self):
+        """Wompi sometimes returns the strings 'true'/'false' for booleans."""
+        token_resp = _make_response(200, {"access_token": "tok", "expires_in": 3600})
+        txn_resp = _make_response(200, {
+            "esReal": "true",
+            "esAprobada": "True",
+            "monto": 10.0,
+        })
+        mock_client = _MockHttpClient({
+            "connect/token": token_resp,
+            "/TransaccionCompra/": txn_resp,
+        })
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            info = await wompi_service.get_transaction("TXN-X")
+        assert info["is_paid"] is True
 
     @pytest.mark.asyncio
     async def test_404_raises(self):
@@ -202,24 +284,33 @@ class TestVerifyPayment:
         not_found = _make_response(404, {}, text="not found")
         mock_client = _MockHttpClient({
             "connect/token": token_resp,
-            "EnlacesPago/": not_found,
+            "/TransaccionCompra/": not_found,
         })
         with patch("httpx.AsyncClient", return_value=mock_client):
             with pytest.raises(WompiError) as exc:
-                await verify_payment("WLINK-MISSING")
+                await wompi_service.get_transaction("TXN-MISSING")
         assert exc.value.status == 404
 
     @pytest.mark.asyncio
-    async def test_invalid_credits_field_returns_zero(self):
+    async def test_empty_id_raises_400(self):
+        with pytest.raises(WompiError) as exc:
+            await wompi_service.get_transaction("")
+        assert exc.value.status == 400
+
+    @pytest.mark.asyncio
+    async def test_verify_payment_backcompat(self):
+        """verify_payment(id) still works, returning the trimmed dict shape."""
         token_resp = _make_response(200, {"access_token": "tok", "expires_in": 3600})
-        verify_resp = _make_response(200, {
-            "infoProducto": {"cantidadCreditos": "not-a-number"},
-            "transaccionCompra": {"resultado": {"estado": "aprobada"}},
+        txn_resp = _make_response(200, {
+            "esReal": True, "esAprobada": True, "monto": 10.0,
+            "infoProducto": {"identificadorOrg": "org-X", "cantidadCreditos": "100"},
         })
         mock_client = _MockHttpClient({
             "connect/token": token_resp,
-            "EnlacesPago/": verify_resp,
+            "/TransaccionCompra/": txn_resp,
         })
         with patch("httpx.AsyncClient", return_value=mock_client):
-            info = await verify_payment("WLINK-X")
-        assert info["credits"] == 0
+            info = await wompi_service.verify_payment("TXN-1")
+        assert info["is_paid"] is True
+        assert info["credits"] == 100
+        assert info["org_id"] == "org-X"

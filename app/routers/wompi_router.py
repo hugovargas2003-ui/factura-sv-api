@@ -21,7 +21,7 @@ from app.dependencies import get_current_user, get_dte_service
 from app.services.wompi_service import (
     WompiError,
     create_payment_link,
-    verify_payment,
+    get_transaction,
 )
 
 logger = logging.getLogger("factura-sv.wompi_router")
@@ -106,47 +106,80 @@ async def wompi_checkout(
     }
 
 
-@router.post("/verify/{payment_id}")
+@router.post("/verify/{id_transaccion}")
 async def wompi_verify(
-    payment_id: str,
+    id_transaccion: str,
     service=Depends(get_dte_service),
     user=Depends(get_current_user),
 ):
     """Settle a Wompi payment: credit the org and record the transaction.
 
+    `id_transaccion` is the `idTransaccion` Wompi appends to the redirect
+    URL after the customer pays (NOT the idEnlace returned by /checkout).
+    We hit GET /TransaccionCompra/{id} to confirm `esReal && esAprobada`
+    before granting credits.
+
     Idempotent — replays return success without crediting twice.
     """
     try:
-        info = await verify_payment(payment_id)
+        txn = await get_transaction(id_transaccion)
     except WompiError as e:
         raise HTTPException(e.status, e.message)
 
-    if not info["is_paid"]:
-        return {"success": False, "is_paid": False, "message": "Pago aún no completado"}
+    if not txn["is_paid"]:
+        return {
+            "success": False,
+            "is_paid": False,
+            "message": "Pago aún no completado o no aprobado",
+        }
 
-    # Trust infoProducto.identificadorOrg over the JWT — the link is bound
-    # to the org that opened it, not whoever lands on the verify URL. Fall
-    # back to the caller's org if Wompi didn't echo it.
-    target_org_id = info.get("org_id") or user["org_id"]
-    credits = info.get("credits") or 0
-    if credits <= 0:
-        raise HTTPException(502, "Wompi no devolvió la cantidad de créditos del enlace")
-
-    # Idempotency: a successful credit row carries the payment_id in the
-    # stripe_payment_id column. If we already wrote one, short-circuit.
+    # Idempotency: a successful credit row carries the idTransaccion in
+    # the stripe_payment_id column. If we already wrote one, short-circuit.
     existing = service.db.table("credit_transactions").select(
-        "id, balance_after"
-    ).eq("stripe_payment_id", payment_id).eq("type", "purchase").execute()
+        "id, balance_after, amount"
+    ).eq("stripe_payment_id", id_transaccion).eq("type", "purchase").execute()
     if existing.data:
+        row = existing.data[0]
         return {
             "success": True,
             "already_credited": True,
             "message": "Pago ya fue acreditado previamente",
-            "credits": credits,
-            "new_balance": existing.data[0].get("balance_after"),
+            "credits": row.get("amount"),
+            "new_balance": row.get("balance_after"),
         }
 
-    # Atomic credit grant — CAS retry on conflict, same shape as
+    # Recover the org + credits to grant. Three sources, in priority:
+    #   1. Wompi's TransaccionCompra response (infoProducto.identificadorOrg
+    #      and cantidadCreditos, populated when we created the link).
+    #   2. The pending row we logged at /checkout time, looked up by
+    #      idEnlace echoed in the transaction.
+    #   3. Fallback: caller's JWT org_id and amount / $0.10.
+    target_org_id = txn.get("org_id_from_info") or ""
+    credits = txn.get("credits_from_info") or 0
+    id_enlace = txn.get("id_enlace") or ""
+
+    if (not target_org_id or not credits) and id_enlace:
+        pending = service.db.table("credit_transactions").select(
+            "org_id, amount"
+        ).eq("stripe_payment_id", id_enlace).eq("type", "wompi_pending").limit(1).execute()
+        if pending.data:
+            target_org_id = target_org_id or pending.data[0].get("org_id", "")
+            credits = credits or int(pending.data[0].get("amount") or 0)
+
+    if not target_org_id:
+        target_org_id = user["org_id"]
+    if not credits:
+        # Last-resort derive from the paid amount (Wompi-authoritative).
+        amount = float(txn.get("amount") or 0)
+        credits = int(round(amount / PRICE_PER_DTE_USD))
+
+    if credits <= 0:
+        raise HTTPException(
+            502,
+            "No se pudo determinar cuántos créditos acreditar para esta transacción",
+        )
+
+    # Atomic credit grant — CAS retry, same shape as
     # DTEService._deduct_credit's deduction pattern.
     new_balance: int | None = None
     for attempt in range(_CREDIT_GRANT_MAX_RETRIES):
@@ -164,13 +197,13 @@ async def wompi_verify(
             new_balance = attempted
             break
         logger.warning(
-            "Wompi credit grant CAS retry %d/%d org=%s payment=%s",
-            attempt + 1, _CREDIT_GRANT_MAX_RETRIES, target_org_id, payment_id,
+            "Wompi credit grant CAS retry %d/%d org=%s txn=%s",
+            attempt + 1, _CREDIT_GRANT_MAX_RETRIES, target_org_id, id_transaccion,
         )
     else:
         logger.error(
-            "Wompi credit grant gave up after %d retries org=%s payment=%s",
-            _CREDIT_GRANT_MAX_RETRIES, target_org_id, payment_id,
+            "Wompi credit grant gave up after %d retries org=%s txn=%s",
+            _CREDIT_GRANT_MAX_RETRIES, target_org_id, id_transaccion,
         )
         raise HTTPException(
             409,
@@ -184,9 +217,12 @@ async def wompi_verify(
         "user_email": user.get("email", ""),
         "amount": credits,
         "type": "purchase",
-        "description": f"Compra Wompi: {credits} créditos (${amount})",
+        "description": (
+            f"Compra Wompi: {credits} créditos (${amount}) "
+            f"txn={id_transaccion} enlace={id_enlace}"
+        ),
         "balance_after": new_balance,
-        "stripe_payment_id": payment_id,  # reused as generic payment_ref
+        "stripe_payment_id": id_transaccion,  # idempotency key
         "service": "credit_purchase",
     }).execute()
 

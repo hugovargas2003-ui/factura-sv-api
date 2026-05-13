@@ -1,23 +1,37 @@
 """Wompi El Salvador payment integration.
 
-Auth flow (OAuth2 client credentials — different from Wompi Colombia):
+API reference (verified 2026-05-12 against docs.wompi.sv):
 
-  1.  POST https://id.wompi.sv/connect/token
-      form-urlencoded: grant_type=client_credentials,
-                       audience=wompi_api,
-                       client_id=<WOMPI_APP_ID>,
-                       client_secret=<WOMPI_API_SECRET>
-      → {access_token, expires_in, token_type}
+  Auth — https://docs.wompi.sv/autenticacion/autenticacion
+    POST https://id.wompi.sv/connect/token
+    Body (application/x-www-form-urlencoded):
+      grant_type=client_credentials
+      client_id=<WOMPI_APP_ID>
+      client_secret=<WOMPI_API_SECRET>
+      audience=wompi_api
+    Returns {access_token, expires_in (seconds), token_type, scope}.
 
-  2.  Calls to api.wompi.sv go with `Authorization: Bearer <access_token>`.
+  Create payment link — https://docs.wompi.sv/metodos-api/enlace-de-pago
+    POST https://api.wompi.sv/EnlacePago    (SINGULAR — plural 404s)
+    Body (application/json) — minimum:
+      identificadorEnlaceComercio: str
+      monto: number  (>= 0.01 USD)
+      nombreProducto: str
+    Optional: descripcion, formaPago, configuracion (urlRedirect, ...),
+              infoProducto (custom merchant fields).
+    Returns urlEnlace, idEnlace, urlQrCodeEnlace.
 
-Tokens are cached in-process until ~60s before their declared expiry.
+  Query transaction — https://docs.wompi.sv/redirect-url/parametros-de-url-de-redirect
+    GET https://api.wompi.sv/TransaccionCompra/{idTransaccion}
+    Authoritative source of payment outcome. A transaction is settled
+    when BOTH `esReal == true` AND `esAprobada == true`.
+    `idTransaccion` arrives in the redirect URL after the customer pays.
 
-Env:
+Env vars:
   WOMPI_APP_ID
   WOMPI_API_SECRET
-  WOMPI_BASE_URL        (optional, default api.wompi.sv)
-  WOMPI_ID_URL          (optional, default id.wompi.sv)
+  WOMPI_BASE_URL        (default https://api.wompi.sv)
+  WOMPI_ID_URL          (default https://id.wompi.sv)
 """
 from __future__ import annotations
 
@@ -52,7 +66,7 @@ _token_cache: dict = {"access_token": None, "expires_at": 0.0}
 async def _get_access_token() -> str:
     """Fetch (or reuse) a Wompi OAuth2 access token.
 
-    Re-uses the in-process cache until 60s before declared expiry to
+    Reuses the in-process cache until 60s before declared expiry to
     avoid hammering the auth endpoint on every payment.
     """
     now = time.monotonic()
@@ -83,17 +97,21 @@ async def _get_access_token() -> str:
         raise WompiError(f"No se pudo conectar a Wompi auth: {e}", status=502) from e
 
     if resp.status_code != 200:
-        logger.error("Wompi token failed: %s %s", resp.status_code, resp.text[:400])
+        logger.error(
+            "Wompi auth failed: status=%s body=%s",
+            resp.status_code, resp.text[:500],
+        )
         raise WompiError(
             f"Wompi auth failed (HTTP {resp.status_code})",
             status=502,
-            raw={"body": resp.text[:400]},
+            raw={"body": resp.text[:500]},
         )
 
     body = resp.json()
     token = body.get("access_token")
     expires_in = int(body.get("expires_in", 3600))
     if not token:
+        logger.error("Wompi auth: response missing access_token: %s", body)
         raise WompiError("Wompi auth: respuesta sin access_token", status=502, raw=body)
 
     _token_cache["access_token"] = token
@@ -129,6 +147,10 @@ async def create_payment_link(
     reference = f"FSV-{credits}cr-{org_id[:8]}-{int(time.time())}"
     token = await _get_access_token()
 
+    # Per docs, minimum body is identificadorEnlaceComercio + monto +
+    # nombreProducto. configuracion/infoProducto/formaPago are optional
+    # but documented to be accepted. Custom data on infoProducto comes
+    # back in the redirect URL as identificadorEnlaceComercio + idEnlace.
     payload = {
         "identificadorEnlaceComercio": reference,
         "monto": round(amount_usd, 2),
@@ -144,17 +166,12 @@ async def create_payment_link(
             "permitirPagoConCreditoEnLinea": False,
         },
         "configuracion": {
-            # Wompi appends its own params; this URL is where the customer
-            # lands after the hosted checkout closes.
-            "urlRedirect": f"{return_url}?status=success&credits={credits}&ref={reference}",
+            "urlRedirect": f"{return_url}?status=success&credits={credits}",
             "esMontoEditable": False,
             "esCantidadEditable": False,
             "cantidadPorDefecto": 1,
             "duracionInactividad": 10,
         },
-        # Wompi mirrors infoProducto fields back on the verify call —
-        # we use them to recover org_id + credits without trusting the
-        # browser's URL.
         "infoProducto": {
             "nombreCliente": org_name,
             "correoCliente": customer_email,
@@ -166,7 +183,7 @@ async def create_payment_link(
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
-                f"{WOMPI_BASE_URL}/EnlacesPago",
+                f"{WOMPI_BASE_URL}/EnlacePago",
                 json=payload,
                 headers={
                     "Authorization": f"Bearer {token}",
@@ -178,22 +195,21 @@ async def create_payment_link(
         raise WompiError(f"No se pudo conectar a Wompi: {e}", status=502) from e
 
     if resp.status_code not in (200, 201):
-        logger.error("Wompi create link failed: %s %s", resp.status_code, resp.text[:400])
+        logger.error(
+            "Wompi create link failed: status=%s body=%s payload_keys=%s",
+            resp.status_code, resp.text[:500], list(payload.keys()),
+        )
         raise WompiError(
             f"Wompi rechazó el enlace (HTTP {resp.status_code})",
             status=502,
-            raw={"body": resp.text[:400]},
+            raw={"body": resp.text[:500]},
         )
 
     data = resp.json()
-    # Wompi SV docs alternate between `urlEnlace` and `urlCompleta`; accept both.
-    payment_url = (
-        data.get("urlCompleta")
-        or data.get("urlEnlace")
-        or data.get("url")
-    )
+    payment_url = data.get("urlEnlace") or data.get("urlCompleta") or data.get("url")
     payment_id = data.get("idEnlace") or data.get("id")
     if not payment_url or not payment_id:
+        logger.error("Wompi create link OK but missing url/id: %s", data)
         raise WompiError(
             "Wompi devolvió respuesta sin URL o ID",
             status=502,
@@ -207,22 +223,29 @@ async def create_payment_link(
     }
 
 
-async def verify_payment(payment_id: str) -> dict:
-    """Look up a payment link to see whether it has been settled.
+async def get_transaction(id_transaccion: str) -> dict:
+    """Query a settled transaction by Wompi's idTransaccion.
 
-    Returns dict with:
-      is_paid          — bool
-      credits          — int (from infoProducto.cantidadCreditos)
-      org_id           — str (from infoProducto.identificadorOrg)
-      amount           — float (from the link's monto)
-      raw              — full Wompi response for debugging
+    `idTransaccion` is what Wompi appends to the redirect URL after the
+    customer pays — NOT the idEnlace we stored from create_payment_link.
+
+    Returns:
+      is_paid    — True iff esReal && esAprobada (Wompi's settled flag).
+      amount     — float, the actual paid monto (authoritative).
+      id_enlace  — str, the EnlacePago this transaction came from.
+      reference  — str, our identificadorEnlaceComercio (echoed back).
+      raw        — full Wompi response.
+
+    Raises WompiError on transport, auth, or 404.
     """
+    if not id_transaccion:
+        raise WompiError("idTransaccion vacío", status=400)
     token = await _get_access_token()
 
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(
-                f"{WOMPI_BASE_URL}/EnlacesPago/{payment_id}",
+                f"{WOMPI_BASE_URL}/TransaccionCompra/{id_transaccion}",
                 headers={
                     "Authorization": f"Bearer {token}",
                     "Accept": "application/json",
@@ -232,41 +255,75 @@ async def verify_payment(payment_id: str) -> dict:
         raise WompiError(f"No se pudo conectar a Wompi: {e}", status=502) from e
 
     if resp.status_code == 404:
-        raise WompiError("Pago no encontrado en Wompi", status=404)
+        raise WompiError("Transacción no encontrada en Wompi", status=404)
     if resp.status_code != 200:
+        logger.error(
+            "Wompi GET transaction failed: status=%s body=%s id=%s",
+            resp.status_code, resp.text[:500], id_transaccion,
+        )
         raise WompiError(
             f"Wompi rechazó la consulta (HTTP {resp.status_code})",
             status=502,
-            raw={"body": resp.text[:400]},
+            raw={"body": resp.text[:500]},
         )
 
     data = resp.json()
+    # Per docs: payment is settled when BOTH flags are true.
+    es_real = _truthy(data.get("esReal"))
+    es_aprobada = _truthy(data.get("esAprobada"))
+    is_paid = es_real and es_aprobada
 
-    # Wompi nests the transaction outcome under "transaccionCompra" /
-    # "transaccionPago" depending on link type. Inspect both.
-    txn = (
-        data.get("transaccionCompra")
-        or data.get("transaccionPago")
-        or data.get("transaccion")
-        or {}
+    # The link metadata may be nested under enlacePago / enlace, or
+    # echoed at the top level depending on response variant.
+    enlace = (
+        data.get("enlacePago")
+        or data.get("enlace")
+        or data
     )
-    estado = ""
-    if isinstance(txn, dict):
-        resultado = txn.get("resultado") or {}
-        estado = (resultado.get("estado") or resultado.get("estadoTransaccion") or "").lower()
-    is_paid = estado in ("aprobada", "approved", "completada", "exitosa", "pagada")
+    id_enlace = (
+        data.get("idEnlace")
+        or (enlace.get("idEnlace") if isinstance(enlace, dict) else None)
+    )
+    reference = (
+        data.get("identificadorEnlaceComercio")
+        or (enlace.get("identificadorEnlaceComercio") if isinstance(enlace, dict) else None)
+    )
 
-    info = data.get("infoProducto") or {}
+    info = (data.get("infoProducto") or (enlace.get("infoProducto") if isinstance(enlace, dict) else {}) or {})
     try:
         credits = int(info.get("cantidadCreditos") or 0)
     except (ValueError, TypeError):
         credits = 0
-    org_id = info.get("identificadorOrg") or ""
 
     return {
         "is_paid": is_paid,
-        "credits": credits,
-        "org_id": org_id,
         "amount": float(data.get("monto") or 0),
+        "id_enlace": str(id_enlace) if id_enlace is not None else "",
+        "reference": str(reference) if reference is not None else "",
+        "org_id_from_info": info.get("identificadorOrg") or "",
+        "credits_from_info": credits,
         "raw": data,
     }
+
+
+# Back-compat shim — older callers used `verify_payment(id)` expecting
+# the EnlacePago-keyed verify. The argument is now treated as the
+# Wompi idTransaccion (from the redirect URL).
+async def verify_payment(id_transaccion: str) -> dict:
+    txn = await get_transaction(id_transaccion)
+    return {
+        "is_paid": txn["is_paid"],
+        "credits": txn["credits_from_info"],
+        "org_id": txn["org_id_from_info"],
+        "amount": txn["amount"],
+        "raw": txn["raw"],
+    }
+
+
+def _truthy(value) -> bool:
+    """Wompi sends booleans as either real bools or the strings 'true'/'false'."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return False
