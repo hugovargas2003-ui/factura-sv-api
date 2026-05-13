@@ -90,7 +90,8 @@ async def emit_purchase_invoice(
             return {"success": False, "tipo_dte": "", "error": "Monto $0 — no requiere factura"}
 
         desc_metodo = {
-            "stripe": "Tarjeta (Stripe)",
+            "wompi": "Tarjeta (Wompi)",
+            "stripe": "Tarjeta (Stripe — legacy)",
             "transferencia_bac": "Transferencia BAC",
             "cash": "Efectivo",
             "admin_grant": "Cortesia administrativa",
@@ -142,7 +143,7 @@ async def emit_purchase_invoice(
             "hora_emision": now.strftime("%H:%M:%S"),
             "condicion_operacion": 1,
             "observaciones": f"Compra de {cantidad} creditos DTE. {desc_metodo}. Ref: {payment_ref}",
-            "forma_pago": 5 if metodo_pago in ("stripe", "transferencia_bac") else 1,
+            "forma_pago": 5 if metodo_pago in ("wompi", "stripe", "transferencia_bac") else 1,
         }
 
         service = DTEService(supabase=supabase, encryption=encryption)

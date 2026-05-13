@@ -31,7 +31,7 @@ class PricingResponse(BaseModel):
 
 class PurchaseRequest(BaseModel):
     cantidad: int = Field(..., ge=10)
-    metodo_pago: str = Field(..., pattern="^(stripe|transferencia_bac)$")
+    metodo_pago: str = Field(..., pattern="^(wompi|stripe|transferencia_bac)$")
     payment_ref: str | None = None
 
 class PurchaseResponse(BaseModel):

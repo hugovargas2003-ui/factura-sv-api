@@ -821,6 +821,9 @@ app.include_router(cron_router, prefix="/api/v1")
 from app.routers.credits_router import router as credits_router
 app.include_router(credits_router)
 
+from app.routers.wompi_router import router as wompi_router
+app.include_router(wompi_router)
+
 from app.routers.receptor_router import router as receptor_router
 app.include_router(receptor_router)
 
